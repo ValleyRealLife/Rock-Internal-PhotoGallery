@@ -1,0 +1,51 @@
+{%- comment -%} Inputs {%- endcomment -%}
+{%- assign fileTypeId = ConfigurationRigging.FileTypeId -%}
+{%- assign fileGuid = Form.guid | Trim | Default:'' -%}
+
+{%- comment -%} The file must belong to this File Type and still be deleted (temporary, not yet purged) {%- endcomment -%}
+{%- sql guid:'{{ fileGuid }}' filetypeid:'{{ fileTypeId }}' return:'fileRows' -%}
+SELECT TOP 1 Id, FileName FROM BinaryFile
+WHERE Guid = TRY_CAST(@guid AS uniqueidentifier)
+  AND BinaryFileTypeId = @filetypeid
+  AND IsTemporary = 1;
+{%- endsql -%}
+{%- assign fileRowCount = fileRows | Size -%}
+{%- assign fileRow = fileRows | First -%}
+
+{%- comment -%} Restore = clear IsTemporary; results are copied out of ModifyResult right away {%- endcomment -%}
+{%- assign restoreSuccess = false -%}
+{%- assign restoreError = '' -%}
+{%- if fileRowCount == 1 -%}
+    {%- modifybinaryfile id:'{{ fileGuid }}' -%}
+        [[ property name:'IsTemporary' ]]False[[ endproperty ]]
+    {%- endmodifybinaryfile -%}
+    {%- assign restoreSuccess = ModifyResult.Success -%}
+    {%- assign restoreError = ModifyResult.ErrorMessage -%}
+    {%- assign restoreValidation = ModifyResult.ValidationErrors -%}
+{%- endif -%}
+
+{%- comment -%} Response (swapped into #wti-detail) {%- endcomment -%}
+{%- if restoreSuccess -%}
+<div class="wti-detail-panel" data-wti-restored
+     hx-get="^/web-theme-images/detail?guid={{ fileGuid | EscapeDataString }}&restored=1"
+     hx-trigger="load"
+     hx-target="#wti-detail">
+    <p><i class="fa fa-spinner fa-spin"></i> Recovered. Loading…</p>
+</div>
+{%- else -%}
+<div class="wti-detail-panel">
+    <div class="wti-detail-head">
+        <strong class="wti-detail-name">{{ fileRow.FileName | Default:'Image' | Escape }}</strong>
+        <button type="button" class="wti-close" aria-label="Close"
+                onclick="this.closest('#wti-detail').innerHTML='';">&times;</button>
+    </div>
+    {%- if fileRowCount != 1 -%}
+    <div class="alert alert-warning">Image not found. It may already be recovered or permanently removed.</div>
+    {%- else -%}
+    <div class="alert alert-warning">
+        <strong>{{ restoreError | Default:'Recover failed.' | Escape }}</strong>
+        {%- for message in restoreValidation %}<br>{{ message.ErrorMessage | Escape }}{% endfor -%}
+    </div>
+    {%- endif -%}
+</div>
+{%- endif -%}

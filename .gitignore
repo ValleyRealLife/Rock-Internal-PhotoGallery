@@ -1,0 +1,40 @@
+# --- Local / assistant notes (not shared) ---
+CLAUDE.md
+CLAUDE.local.md
+.claude/
+
+# --- macOS ---
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+Icon?
+.Spotlight-V100
+.Trashes
+.fseventsd
+.TemporaryItems
+.DocumentRevisions-V100
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+.apdisk
+
+# --- Windows (files that appear when the folder is opened on the Rock server) ---
+Thumbs.db
+ehthumbs.db
+desktop.ini
+$RECYCLE.BIN/
+
+# --- Editors ---
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# --- Backups, temp, and sync conflicts ---
+*.bak
+*.orig
+*.tmp
+*.temp
+*.log
+*conflicted copy*

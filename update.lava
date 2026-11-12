@@ -1,0 +1,88 @@
+{%- comment -%} Inputs {%- endcomment -%}
+{%- assign fileTypeId = ConfigurationRigging.FileTypeId -%}
+{%- assign keywordTypeId = ConfigurationRigging.KeywordsDefinedTypeId -%}
+{%- assign audienceTypeId = ConfigurationRigging.AudienceDefinedTypeId -%}
+{%- assign fileGuid = Form.guid | Trim | Default:'' -%}
+{%- assign description = Form.description | Trim | Default:'' -%}
+{%- assign keywordsIn = Form.keywords | Default:'' -%}
+{%- assign newKeywordsIn = Form.newkeywords | Trim | Default:'' -%}
+{%- assign audienceIn = Form.audience | Default:'' -%}
+
+{%- comment -%} The file must belong to this File Type {%- endcomment -%}
+{%- sql guid:'{{ fileGuid }}' filetypeid:'{{ fileTypeId }}' return:'fileRows' -%}
+SELECT TOP 1 Id FROM BinaryFile
+WHERE Guid = TRY_CAST(@guid AS uniqueidentifier) AND BinaryFileTypeId = @filetypeid;
+{%- endsql -%}
+{%- assign fileRowCount = fileRows | Size -%}
+
+{%- comment -%} Keep only checked keywords that belong to the keyword Defined Type {%- endcomment -%}
+{%- sql list:'{{ keywordsIn }}' dt:'{{ keywordTypeId }}' return:'kwRows' -%}
+SELECT LOWER(CAST(Guid AS varchar(36))) AS Guid FROM DefinedValue
+WHERE DefinedTypeId = @dt
+  AND ',' + @list + ',' LIKE '%,' + CAST(Guid AS varchar(36)) + ',%';
+{%- endsql -%}
+{%- capture keywordList -%}{%- for r in kwRows -%}{{ r.Guid }},{%- endfor -%}{%- endcapture -%}
+
+{%- comment -%} New keywords: reuse an existing value with the same text, else create it {%- endcomment -%}
+{%- assign newNames = newKeywordsIn | Split:',' -%}
+{%- for rawName in newNames -%}
+    {%- assign kwName = rawName | Trim -%}
+    {%- if kwName != '' -%}
+        {%- sql n:'{{ kwName }}' dt:'{{ keywordTypeId }}' return:'existingRows' -%}
+SELECT TOP 1 LOWER(CAST(Guid AS varchar(36))) AS Guid FROM DefinedValue
+WHERE DefinedTypeId = @dt AND Value = @n;
+        {%- endsql -%}
+        {%- assign existing = existingRows | First -%}
+        {%- if existing -%}
+            {%- capture keywordList -%}{{ keywordList }}{{ existing.Guid }},{%- endcapture -%}
+        {%- else -%}
+            {%- modifydefinedvalue id:'0' -%}
+                [[ property name:'DefinedTypeId' ]]{{ keywordTypeId }}[[ endproperty ]]
+                [[ property name:'Value' ]]{{ kwName }}[[ endproperty ]]
+            {%- endmodifydefinedvalue -%}
+            {%- if ModifyResult.Success -%}
+                {%- assign newGuid = ModifyResult.DefinedValue.Guid | Downcase -%}
+                {%- capture keywordList -%}{{ keywordList }}{{ newGuid }},{%- endcapture -%}
+            {%- endif -%}
+        {%- endif -%}
+    {%- endif -%}
+{%- endfor -%}
+{%- assign keywordValue = keywordList | Split:',' | Distinct | Join:',' -%}
+
+{%- comment -%} Keep only checked audiences that belong to the audience Defined Type {%- endcomment -%}
+{%- sql list:'{{ audienceIn }}' dt:'{{ audienceTypeId }}' return:'audRows' -%}
+SELECT LOWER(CAST(Guid AS varchar(36))) AS Guid FROM DefinedValue
+WHERE DefinedTypeId = @dt
+  AND ',' + @list + ',' LIKE '%,' + CAST(Guid AS varchar(36)) + ',%';
+{%- endsql -%}
+{%- capture audienceList -%}{%- for r in audRows -%}{{ r.Guid }},{%- endfor -%}{%- endcapture -%}
+{%- assign audienceValue = audienceList | Split:',' | Join:',' -%}
+
+{%- comment -%} Save; results are copied out of ModifyResult right away {%- endcomment -%}
+{%- assign saveSuccess = false -%}
+{%- assign saveError = '' -%}
+{%- if fileRowCount == 1 -%}
+    {%- modifybinaryfile id:'{{ fileGuid }}' -%}
+        [[ property name:'Description' ]]{{ description }}[[ endproperty ]]
+        [[ attribute key:'Keywords' ]]{{ keywordValue }}[[ endattribute ]]
+        [[ attribute key:'Audience' ]]{{ audienceValue }}[[ endattribute ]]
+    {%- endmodifybinaryfile -%}
+    {%- assign saveSuccess = ModifyResult.Success -%}
+    {%- assign saveError = ModifyResult.ErrorMessage -%}
+    {%- assign saveValidation = ModifyResult.ValidationErrors -%}
+{%- endif -%}
+
+{%- comment -%} Response {%- endcomment -%}
+{%- if fileRowCount != 1 -%}
+<div class="alert alert-warning">Image not found.</div>
+{%- elsif saveSuccess -%}
+<div class="wti-saved"><i class="fa fa-check"></i> Saved</div>
+{%- if newKeywordsIn != '' -%}
+<div hx-get="^/web-theme-images/detail?guid={{ fileGuid }}&saved=1" hx-trigger="load" hx-target="#wti-detail"></div>
+{%- endif -%}
+{%- else -%}
+<div class="alert alert-warning">
+    <strong>{{ saveError | Default:'Save failed.' | Escape }}</strong>
+    {%- for message in saveValidation %}<br>{{ message.ErrorMessage | Escape }}{% endfor -%}
+</div>
+{%- endif -%}

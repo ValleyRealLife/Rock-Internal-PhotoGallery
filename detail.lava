@@ -1,0 +1,156 @@
+{%- comment -%} Inputs {%- endcomment -%}
+{%- assign fileTypeId = ConfigurationRigging.FileTypeId -%}
+{%- assign keywordTypeId = ConfigurationRigging.KeywordsDefinedTypeId -%}
+{%- assign audienceTypeId = ConfigurationRigging.AudienceDefinedTypeId -%}
+{%- assign guid = QueryString.guid | Trim | Default:'' -%}
+{%- assign saved = QueryString.saved | AsBoolean -%}
+{%- assign restored = QueryString.restored | AsBoolean -%}
+
+{%- comment -%} Resolve the GUID to an Id within this File Type only (deleted = IsTemporary, not yet purged) {%- endcomment -%}
+{%- sql guid:'{{ guid }}' filetypeid:'{{ fileTypeId }}' -%}
+SELECT TOP 1 Id, IsTemporary, ModifiedDateTime
+FROM BinaryFile
+WHERE Guid = TRY_CAST(@guid AS uniqueidentifier)
+  AND BinaryFileTypeId = @filetypeid;
+{%- endsql -%}
+{%- assign row = results | First -%}
+{%- assign fileId = row.Id | Default:0 -%}
+{%- assign isDeleted = row.IsTemporary | AsBoolean -%}
+
+{%- comment -%} Option lists for the edit form {%- endcomment -%}
+{%- sql dt:'{{ keywordTypeId }}' return:'keywordOptions' -%}
+SELECT LOWER(CAST(Guid AS varchar(36))) AS Guid, Value
+FROM DefinedValue
+WHERE DefinedTypeId = @dt AND IsActive = 1
+ORDER BY Value;
+{%- endsql -%}
+{%- sql dt:'{{ audienceTypeId }}' return:'audienceOptions' -%}
+SELECT LOWER(CAST(Guid AS varchar(36))) AS Guid, Value
+FROM DefinedValue
+WHERE DefinedTypeId = @dt AND IsActive = 1
+ORDER BY [Order], Value;
+{%- endsql -%}
+
+{%- if fileId == 0 -%}
+<div class="wti-detail-panel"><p class="wti-empty">Image not found.</p></div>
+{%- else -%}
+{%- binaryfile id:'{{ fileId }}' -%}
+{%- assign kwRaw = binaryfile | Attribute:'Keywords','RawValue' | Downcase -%}
+{%- assign audRaw = binaryfile | Attribute:'Audience','RawValue' | Downcase -%}
+{%- assign sizeMb = binaryfile.FileSize | DividedBy:1048576,1 -%}
+{%- capture imageUrl -%}/GetImage.ashx?guid={{ binaryfile.Guid }}{%- endcapture -%}
+
+<div class="wti-detail-panel" data-guid="{{ binaryfile.Guid }}">
+    <div class="wti-detail-head">
+        <strong class="wti-detail-name">{{ binaryfile.FileName | Escape }}</strong>
+        <button type="button" class="wti-close" aria-label="Close"
+                onclick="this.closest('#wti-detail').innerHTML='';">&times;</button>
+    </div>
+
+    <a href="/GetFile.ashx?guid={{ binaryfile.Guid }}" target="_blank" rel="noopener" title="Open original">
+        <img class="wti-detail-img" src="{{ imageUrl }}&w=720" alt="">
+    </a>
+
+    <dl class="wti-meta">
+        <dt>Dimensions</dt><dd>{{ binaryfile.Width }} × {{ binaryfile.Height }}</dd>
+        <dt>Size</dt><dd>{{ sizeMb }} MB</dd>
+        <dt>Uploaded</dt><dd>{{ binaryfile.CreatedDateTime | Date:'MMM d, yyyy' }}</dd>
+    </dl>
+
+    {%- if isDeleted -%}
+    <div class="alert alert-warning wti-deleted-note">
+        <strong><i class="fa fa-trash"></i> Deleted {{ row.ModifiedDateTime | Date:'MMM d, yyyy h:mm tt' }}.</strong>
+        Rock removes it permanently at the first cleanup run after {{ row.ModifiedDateTime | DateAdd:1,'d' | Date:'MMM d, h:mm tt' }}.
+        Recover it to put it back with the same GUID, keywords, and audience.
+    </div>
+    <div class="wti-detail-foot">
+        <button type="button" class="btn btn-primary btn-sm wti-restore"
+                hx-post="^/web-theme-images/restore"
+                hx-vals='{"guid": "{{ binaryfile.Guid }}"}'
+                hx-target="#wti-detail"
+                hx-on::before-request="this.disabled = true;"
+                hx-on::after-request="this.disabled = false;">
+            <i class="fa fa-undo"></i> Recover
+        </button>
+    </div>
+    {%- else -%}
+
+    <lava-form class="wti-edit">
+        <input type="hidden" name="guid" value="{{ binaryfile.Guid }}">
+
+        <div class="form-group">
+            <label class="control-label" for="wti-desc">Description</label>
+            <textarea id="wti-desc" name="description" class="form-control" rows="2">{{ binaryfile.Description | Escape }}</textarea>
+        </div>
+
+        <div class="form-group">
+            <label class="control-label">Keywords</label>
+            <div class="wti-keywords">
+                {%- for dv in keywordOptions -%}
+                <label class="wti-chip">
+                    <input type="checkbox" name="keywords" value="{{ dv.Guid }}"{% if kwRaw contains dv.Guid %} checked{% endif %}>
+                    {{ dv.Value | Escape }}
+                </label>
+                {%- endfor -%}
+            </div>
+            <input type="text" name="newkeywords" class="form-control input-sm" placeholder="Add keywords, comma-separated">
+        </div>
+
+        <div class="form-group">
+            <label class="control-label">Audience</label>
+            <div class="wti-keywords">
+                {%- for dv in audienceOptions -%}
+                <label class="wti-chip">
+                    <input type="checkbox" name="audience" value="{{ dv.Guid }}"{% if audRaw contains dv.Guid %} checked{% endif %}>
+                    {{ dv.Value | Escape }}
+                </label>
+                {%- endfor -%}
+            </div>
+        </div>
+
+        <div id="wti-status">{% if saved %}<div class="wti-saved"><i class="fa fa-check"></i> Saved</div>{% elsif restored %}<div class="wti-saved"><i class="fa fa-check"></i> Recovered</div>{% endif %}</div>
+        <button type="button" class="btn btn-primary btn-sm wti-save"
+                hx-post="^/web-theme-images/update"
+                hx-include="closest lava-form"
+                hx-target="#wti-status"
+                hx-on::before-request="this.classList.add('is-busy'); this.disabled = true;"
+                hx-on::after-request="this.classList.remove('is-busy'); this.disabled = false;">
+            <span class="wti-save-label">Save</span>
+            <span class="wti-save-busy"><i class="fa fa-spinner fa-spin"></i> Saving…</span>
+        </button>
+    </lava-form>
+
+    <div class="wti-copy">
+        <span class="wti-copy-label">GUID</span>
+        <div class="wti-copy-row">
+            <code>{{ binaryfile.Guid }}</code>
+            <button type="button" class="btn btn-default btn-xs" data-copy="{{ binaryfile.Guid }}"
+                    onclick="navigator.clipboard.writeText(this.dataset.copy);this.textContent='Copied';">Copy</button>
+        </div>
+        <span class="wti-copy-label">Image URL</span>
+        <div class="wti-copy-row">
+            <code>{{ imageUrl }}</code>
+            <button type="button" class="btn btn-default btn-xs wti-url-open"
+                    data-guid="{{ binaryfile.Guid }}"
+                    data-name="{{ binaryfile.FileName | Escape }}"
+                    data-width="{{ binaryfile.Width }}"
+                    data-height="{{ binaryfile.Height }}"><i class="fa fa-link"></i> Build URL</button>
+        </div>
+    </div>
+
+    <div class="wti-detail-foot">
+        <button type="button" class="btn btn-default btn-sm wti-delete"
+                hx-post="^/web-theme-images/delete"
+                hx-vals='{"guid": "{{ binaryfile.Guid }}"}'
+                hx-target="#wti-detail"
+                hx-confirm="Delete {{ binaryfile.FileName | Escape }}?&#10;&#10;Pages that use this image's GUID will show a broken image."
+                hx-on::before-request="this.classList.add('is-busy'); this.disabled = true;"
+                hx-on::after-request="this.classList.remove('is-busy'); this.disabled = false;">
+            <span class="wti-delete-label"><i class="fa fa-trash"></i> Delete</span>
+            <span class="wti-delete-busy"><i class="fa fa-spinner fa-spin"></i> Deleting…</span>
+        </button>
+    </div>
+    {%- endif -%}
+</div>
+{%- endbinaryfile -%}
+{%- endif -%}

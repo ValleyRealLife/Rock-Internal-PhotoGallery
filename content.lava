@@ -1,0 +1,841 @@
+{%- comment -%} Lava {%- endcomment -%}
+{%- assign appSlug = 'web-theme-images' -%}
+{%- assign fileTypeGuid = ConfigurationRigging.FileTypeGuid | Default:'0279c0ea-fc51-4047-90e4-4493ed67be65' -%}
+
+{%- comment -%} Markup {%- endcomment -%}
+<div class="wti">
+    <div class="wti-toolbar">
+        <div class="wti-filters" id="wti-filters">
+            <span class="wti-search-wrap">
+                <input type="search" name="q" class="form-control wti-search"
+                       placeholder="Search name, description, keyword"
+                       onkeydown="if (event.key === 'Enter') { event.preventDefault(); }"
+                       hx-get="^/{{ appSlug }}/browse"
+                       hx-trigger="input changed delay:300ms, search"
+                       hx-target="#wti-grid"
+                       hx-include="#wti-filters">
+                <button type="button" class="wti-search-clear" aria-label="Clear search" title="Clear search">&times;</button>
+            </span>
+            <select name="sort" class="form-control wti-sort"
+                    hx-get="^/{{ appSlug }}/browse"
+                    hx-trigger="change"
+                    hx-target="#wti-grid"
+                    hx-include="#wti-filters">
+                <option value="newest">Newest</option>
+                <option value="oldest">Oldest</option>
+                <option value="name">Name</option>
+            </select>
+            <div class="btn-group wti-view"
+                 hx-get="^/{{ appSlug }}/browse"
+                 hx-trigger="change"
+                 hx-target="#wti-grid"
+                 hx-include="#wti-filters">
+                <label class="btn btn-default"><input type="radio" name="view" value="grid" checked> <i class="fa fa-th"></i> Grid</label>
+                <label class="btn btn-default"><input type="radio" name="view" value="filmstrip"> <i class="fa fa-film"></i> Filmstrip</label>
+            </div>
+            <label class="btn btn-default wti-toggle" title="Deleted images can be recovered until Rock's cleanup job removes them, about a day after deletion">
+                <input type="checkbox" name="deleted" value="1" class="wti-deleted-input"
+                       hx-get="^/{{ appSlug }}/browse"
+                       hx-trigger="change"
+                       hx-target="#wti-grid"
+                       hx-include="#wti-filters">
+                <i class="fa fa-trash"></i> Recover
+            </label>
+        </div>
+        <label class="btn btn-primary wti-upload-btn" for="wti-file-input">
+            <i class="fa fa-upload"></i> Upload
+        </label>
+        <input type="file" id="wti-file-input" class="wti-file-input" accept="image/*" multiple>
+    </div>
+
+    <div id="wti-queue" class="wti-queue" hidden></div>
+
+    <div class="wti-body" id="wti-drop">
+        <div id="wti-grid" class="wti-grid"
+             hx-get="^/{{ appSlug }}/browse"
+             hx-trigger="load, wti:refresh"
+             hx-include="#wti-filters"></div>
+        <aside id="wti-detail" class="wti-detail"></aside>
+    </div>
+
+    {%- comment -%} Image URL builder (Bootstrap modal; moved to <body> by the script) {%- endcomment -%}
+    <div class="modal fade wti-url-modal" id="wti-url-modal" tabindex="-1" role="dialog" aria-labelledby="wti-url-title">
+        <div class="modal-dialog modal-lg" role="document">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <button type="button" class="close" data-dismiss="modal" aria-label="Close"><span aria-hidden="true">&times;</span></button>
+                    <h4 class="modal-title" id="wti-url-title">Build image URL</h4>
+                    <div class="wti-url-meta"><span id="wti-url-name"></span> · Original <span id="wti-url-dims"></span></div>
+                </div>
+                <div class="modal-body">
+                    <div class="row">
+                        <div class="col-sm-6">
+                            <div class="form-group">
+                                <label class="control-label">Presets</label>
+                                <div class="wti-url-presets">
+                                    <button type="button" class="btn btn-default btn-xs" data-w="" data-h="" data-mode="max">Original size</button>
+                                    <button type="button" class="btn btn-default btn-xs" data-w="480" data-h="" data-mode="max">Thumbnail 480</button>
+                                    <button type="button" class="btn btn-default btn-xs" data-w="800" data-h="600" data-mode="crop">Card 800×600</button>
+                                    <button type="button" class="btn btn-default btn-xs" data-w="1080" data-h="1080" data-mode="crop">Square 1080</button>
+                                    <button type="button" class="btn btn-default btn-xs" data-w="1920" data-h="" data-mode="max">Full width 1920</button>
+                                    <button type="button" class="btn btn-default btn-xs" data-w="1920" data-h="1080" data-mode="crop">Hero 1920×1080</button>
+                                </div>
+                            </div>
+
+                            <div class="checkbox">
+                                <label><input type="checkbox" id="wti-url-original"> Original file (no resizing)</label>
+                            </div>
+
+                            <div class="wti-url-resize" id="wti-url-resize">
+                                <div class="row">
+                                    <div class="col-xs-6 form-group">
+                                        <label class="control-label" for="wti-url-w">Width (px)</label>
+                                        <input type="number" min="1" step="1" id="wti-url-w" class="form-control input-sm" placeholder="Auto">
+                                    </div>
+                                    <div class="col-xs-6 form-group">
+                                        <label class="control-label" for="wti-url-h">Height (px)</label>
+                                        <input type="number" min="1" step="1" id="wti-url-h" class="form-control input-sm" placeholder="Auto">
+                                    </div>
+                                </div>
+
+                                <div class="form-group">
+                                    <label class="control-label" for="wti-url-mode">Fit</label>
+                                    <select id="wti-url-mode" class="form-control input-sm">
+                                        <option value="max">Fit within (keep the whole image)</option>
+                                        <option value="crop">Crop to fill</option>
+                                        <option value="pad">Pad to exact size</option>
+                                        <option value="stretch">Stretch (distorts)</option>
+                                    </select>
+                                    <p class="help-block" id="wti-url-mode-hint"></p>
+                                </div>
+
+                                <div class="form-group" id="wti-url-anchor-group">
+                                    <label class="control-label" for="wti-url-anchor">Keep in frame</label>
+                                    <select id="wti-url-anchor" class="form-control input-sm">
+                                        <option value="topleft">Top left</option>
+                                        <option value="topcenter">Top</option>
+                                        <option value="topright">Top right</option>
+                                        <option value="middleleft">Left</option>
+                                        <option value="middlecenter" selected>Center</option>
+                                        <option value="middleright">Right</option>
+                                        <option value="bottomleft">Bottom left</option>
+                                        <option value="bottomcenter">Bottom</option>
+                                        <option value="bottomright">Bottom right</option>
+                                    </select>
+                                </div>
+
+                                <div class="form-group" id="wti-url-bg-group">
+                                    <label class="control-label" for="wti-url-bg">Padding color</label>
+                                    <input type="color" id="wti-url-bg" class="wti-url-color" value="#ffffff">
+                                </div>
+
+                                <div class="checkbox">
+                                    <label><input type="checkbox" id="wti-url-upscale"> Allow enlarging beyond the original size</label>
+                                </div>
+
+                                <div class="row">
+                                    <div class="col-xs-6 form-group">
+                                        <label class="control-label" for="wti-url-format">Format</label>
+                                        <select id="wti-url-format" class="form-control input-sm">
+                                            <option value="">Same as original</option>
+                                            <option value="jpg">JPG</option>
+                                            <option value="png">PNG</option>
+                                        </select>
+                                    </div>
+                                    <div class="col-xs-6 form-group" id="wti-url-quality-group">
+                                        <label class="control-label" for="wti-url-quality">JPG quality</label>
+                                        <input type="number" min="1" max="100" step="1" id="wti-url-quality" class="form-control input-sm" value="90">
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="checkbox">
+                                <label><input type="checkbox" id="wti-url-absolute"> Full URL (include this site's https:// address)</label>
+                            </div>
+                        </div>
+
+                        <div class="col-sm-6">
+                            <label class="control-label" for="wti-url-output">URL</label>
+                            <div class="input-group input-group-sm">
+                                <input type="text" id="wti-url-output" class="form-control" readonly>
+                                <span class="input-group-btn">
+                                    <button type="button" class="btn btn-primary" id="wti-url-copy">Copy</button>
+                                </span>
+                            </div>
+                            <div class="wti-url-preview"><img id="wti-url-preview" alt="Preview"></div>
+                            <div class="wti-url-size">
+                                <span id="wti-url-size"></span>
+                                <a id="wti-url-open-link" href="#" target="_blank" rel="noopener"><i class="fa fa-external-link"></i> Open</a>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-default" data-dismiss="modal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+(function () {
+    var fileTypeGuid = '{{ fileTypeGuid }}';
+    var detailUrl = '/api/v2/lava-app/1/{{ appSlug }}/detail?guid=';
+    var input = document.getElementById('wti-file-input');
+    var dropZone = document.getElementById('wti-drop');
+    var queue = document.getElementById('wti-queue');
+    var grid = document.getElementById('wti-grid');
+
+    if (!input || input.dataset.bound) { return; }
+    input.dataset.bound = '1';
+
+    /* Upload */
+    function uploadOne(file) {
+        return new Promise(function (resolve) {
+            var row = document.createElement('div');
+            row.className = 'wti-queue-item';
+            row.innerHTML = '<span class="wti-queue-name"></span><progress max="100" value="0"></progress><span class="wti-queue-state">Waiting</span>';
+            row.querySelector('.wti-queue-name').textContent = file.name;
+            queue.appendChild(row);
+
+            var bar = row.querySelector('progress');
+            var state = row.querySelector('.wti-queue-state');
+            var data = new FormData();
+            data.append('file', file, file.name);
+
+            var xhr = new XMLHttpRequest();
+            xhr.open('POST', '/FileUploader.ashx?isBinaryFile=T&fileTypeGuid=' + fileTypeGuid + '&IsTemporary=false');
+            xhr.upload.onprogress = function (e) {
+                if (e.lengthComputable) {
+                    bar.value = Math.round(e.loaded / e.total * 100);
+                    state.textContent = bar.value + '%';
+                }
+            };
+            xhr.onload = function () {
+                if (xhr.status === 200) {
+                    var result = null;
+                    try { result = JSON.parse(xhr.responseText); } catch (err) { }
+                    bar.value = 100;
+                    state.textContent = 'Done';
+                    row.classList.add('is-done');
+                    resolve(result);
+                } else {
+                    state.textContent = xhr.responseText || ('Error ' + xhr.status);
+                    row.classList.add('is-error');
+                    resolve(null);
+                }
+            };
+            xhr.onerror = function () {
+                state.textContent = 'Network error';
+                row.classList.add('is-error');
+                resolve(null);
+            };
+            xhr.send(data);
+        });
+    }
+
+    async function uploadAll(files) {
+        var images = Array.prototype.filter.call(files, function (f) { return f.type.indexOf('image/') === 0; });
+        if (!images.length) { return; }
+
+        queue.hidden = false;
+        var first = null;
+
+        for (var i = 0; i < images.length; i++) {
+            var result = await uploadOne(images[i]);
+            if (result && !first) { first = result; }
+        }
+
+        htmx.trigger(grid, 'wti:refresh');
+
+        if (first && first.Guid) {
+            htmx.ajax('GET', detailUrl + first.Guid, { target: '#wti-detail' });
+        }
+
+        setTimeout(function () {
+            queue.querySelectorAll('.is-done').forEach(function (el) { el.remove(); });
+            if (!queue.children.length) { queue.hidden = true; }
+        }, 4000);
+    }
+
+    input.addEventListener('change', function () {
+        uploadAll(input.files);
+        input.value = '';
+    });
+
+    ['dragenter', 'dragover'].forEach(function (type) {
+        dropZone.addEventListener(type, function (e) {
+            e.preventDefault();
+            dropZone.classList.add('is-dragging');
+        });
+    });
+    dropZone.addEventListener('dragleave', function (e) {
+        if (!dropZone.contains(e.relatedTarget)) { dropZone.classList.remove('is-dragging'); }
+    });
+    dropZone.addEventListener('drop', function (e) {
+        e.preventDefault();
+        dropZone.classList.remove('is-dragging');
+        uploadAll(e.dataTransfer.files);
+    });
+
+    /* Filmstrip: neighbouring thumbnail of the active one, or null */
+    function siblingThumb(direction) {
+        var thumbs = Array.prototype.slice.call(document.querySelectorAll('.wti-thumb'));
+        var index = thumbs.indexOf(document.querySelector('.wti-thumb.is-active'));
+        if (index < 0) { return null; }
+        return thumbs[direction === 'next' ? index + 1 : index - 1] || null;
+    }
+
+    /* Filmstrip: enable/disable the stage arrows */
+    function updateStageNav() {
+        var prev = document.querySelector('.wti-stage-nav.is-prev');
+        var next = document.querySelector('.wti-stage-nav.is-next');
+        if (prev) { prev.disabled = !siblingThumb('prev'); }
+        if (next) { next.disabled = !siblingThumb('next'); }
+    }
+
+    /* Search: clear button empties the field and reloads the gallery */
+    document.addEventListener('click', function (e) {
+        var clear = e.target.closest('.wti-search-clear');
+        if (!clear) { return; }
+        var search = clear.parentElement.querySelector('.wti-search');
+        search.value = '';
+        htmx.trigger(search, 'search');
+        search.focus();
+    });
+
+    /* Detail panel: open means it has content; the Details toggle reflects that */
+    var detail = document.getElementById('wti-detail');
+    function detailIsOpen() { return detail.innerHTML.trim() !== ''; }
+    function loadDetail(guid) { htmx.ajax('GET', detailUrl + guid, { target: '#wti-detail' }); }
+    function syncDetailsToggle() {
+        var toggle = document.querySelector('.wti-details-toggle');
+        if (!toggle) { return; }
+        var open = detailIsOpen();
+        toggle.classList.toggle('is-active', open);
+        toggle.setAttribute('aria-pressed', open ? 'true' : 'false');
+    }
+
+    /* Filmstrip: thumbnail selects the stage image; stage arrows step; Details toggles the panel */
+    document.addEventListener('click', function (e) {
+        if (e.target.closest('.wti-close')) { syncDetailsToggle(); return; }
+
+        var toggle = e.target.closest('.wti-details-toggle');
+        if (toggle) {
+            if (detailIsOpen()) {
+                detail.innerHTML = '';
+                syncDetailsToggle();
+            } else {
+                var current = document.querySelector('.wti-thumb.is-active');
+                if (current) { loadDetail(current.dataset.guid); }
+            }
+            return;
+        }
+
+        var nav = e.target.closest('.wti-stage-nav');
+        if (nav) {
+            var target = siblingThumb(nav.dataset.step);
+            if (target) { target.click(); }
+            return;
+        }
+
+        var thumb = e.target.closest('.wti-thumb');
+        if (!thumb) { return; }
+
+        showThumb(thumb);
+
+        /* Only follow the selection when the panel is already open */
+        if (detailIsOpen()) { loadDetail(thumb.dataset.guid); }
+    });
+
+    /* Filmstrip: put a thumbnail on the stage and mark it active */
+    function showThumb(thumb) {
+        var stage = document.getElementById('wti-stage-img');
+        var caption = document.getElementById('wti-stage-caption');
+        if (stage) { stage.src = thumb.dataset.stage; }
+        if (caption) { caption.textContent = thumb.dataset.name; }
+
+        document.querySelectorAll('.wti-thumb.is-active').forEach(function (el) { el.classList.remove('is-active'); });
+        thumb.classList.add('is-active');
+        thumb.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
+        updateStageNav();
+    }
+
+    /* Switching to filmstrip keeps the image open in the detail panel on the stage.
+       If it isn't in the first page, load more pages (up to 10) until it turns up. */
+    var pendingGuid = null;
+    var pendingPages = 0;
+
+    function selectedGuid() {
+        var panel = detail.querySelector('.wti-detail-panel[data-guid]');
+        return panel ? panel.dataset.guid.toLowerCase() : null;
+    }
+
+    function trySelectPending() {
+        if (!pendingGuid) { return; }
+        var thumbs = document.querySelectorAll('.wti-thumb');
+        if (!thumbs.length) { return; } /* filmstrip not loaded yet */
+
+        var match = Array.prototype.find.call(thumbs, function (t) {
+            return (t.dataset.guid || '').toLowerCase() === pendingGuid;
+        });
+        if (match) {
+            pendingGuid = null;
+            showThumb(match);
+            return;
+        }
+
+        var more = document.querySelector('.wti-strip .wti-more');
+        if (more && pendingPages < 10) {
+            pendingPages++;
+            htmx.trigger(more, 'intersect');
+        } else {
+            pendingGuid = null; /* not in the current results */
+        }
+    }
+
+    document.addEventListener('change', function (e) {
+        if (e.target.name !== 'view' || e.target.value !== 'filmstrip') { return; }
+        pendingGuid = selectedGuid();
+        pendingPages = 0;
+    });
+
+    /* Re-check arrows and the Details toggle after any swap (infinite scroll, panel loads) */
+    document.body.addEventListener('htmx:afterSettle', function () {
+        trySelectPending();
+        updateStageNav();
+        syncDetailsToggle();
+    });
+
+    /* hx-confirm: use Rock's modal (bootbox) instead of the browser's confirm() */
+    function escapeHtml(text) {
+        var div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+    document.body.addEventListener('htmx:confirm', function (e) {
+        if (!e.detail.question || !e.target.closest('.wti')) { return; }
+        e.preventDefault();
+        var message = e.detail.question;
+        if (window.Rock && Rock.dialogs && window.bootbox) {
+            Rock.dialogs.confirm(escapeHtml(message).replace(/\n/g, '<br>'), function (ok) {
+                if (ok) { e.detail.issueRequest(true); }
+            });
+        } else if (window.confirm(message)) {
+            e.detail.issueRequest(true);
+        }
+    });
+
+    /* Surface failed requests (htmx 2 does not swap error responses) */
+    function reportFailure(e, text) {
+        if (!e.target.closest || !e.target.closest('.wti')) { return; }
+        if (window.Rock && Rock.dialogs && window.bootbox) { Rock.dialogs.alert(escapeHtml(text)); }
+        else { alert(text); }
+    }
+    document.body.addEventListener('htmx:responseError', function (e) {
+        var xhr = e.detail.xhr;
+        reportFailure(e, 'Request failed (' + xhr.status + ' ' + xhr.statusText + '): ' + e.detail.pathInfo.requestPath);
+    });
+    document.body.addEventListener('htmx:sendError', function (e) {
+        reportFailure(e, 'Network error: ' + e.detail.pathInfo.requestPath);
+    });
+
+    /* Delete / restore: refresh the grid once the detail panel reports either */
+    document.body.addEventListener('htmx:afterSwap', function (e) {
+        var target = e.detail && e.detail.target;
+        if (target && target.id === 'wti-detail' && target.querySelector('[data-wti-deleted], [data-wti-restored]')) {
+            htmx.trigger(grid, 'wti:refresh');
+        }
+    });
+
+    /* Recently deleted: switching lists closes the open panel */
+    document.addEventListener('change', function (e) {
+        if (!e.target.matches('.wti-deleted-input')) { return; }
+        document.getElementById('wti-detail').innerHTML = '';
+    });
+
+    /* Image URL builder */
+    var urlModal = document.getElementById('wti-url-modal');
+    document.body.appendChild(urlModal); /* outside the page form and any transformed ancestor */
+
+    var urlEl = function (id) { return document.getElementById('wti-url-' + id); };
+    var urlImage = null; /* { guid, name, width, height } */
+    var previewTimer = null;
+    var modeHints = {
+        max: 'Scales to fit inside width × height. Nothing is cut off.',
+        crop: 'Fills width × height exactly, trimming edges that don’t fit.',
+        pad: 'Fits the whole image, then pads it out to the exact size.',
+        stretch: 'Forces the exact width × height. The image will distort.'
+    };
+
+    function positiveInt(value) {
+        var n = parseInt(value, 10);
+        return n > 0 ? n : 0;
+    }
+    function showGroup(el, visible) { el.classList.toggle('wti-is-hidden', !visible); }
+
+    function outputIsJpg() {
+        var format = urlEl('format').value;
+        if (format) { return format === 'jpg'; }
+        return /\.jpe?g$/i.test(urlImage ? urlImage.name : '');
+    }
+
+    function buildImageUrl() {
+        var params = ['guid=' + urlImage.guid];
+        var path = '/GetFile.ashx';
+
+        if (!urlEl('original').checked) {
+            path = '/GetImage.ashx';
+            var w = positiveInt(urlEl('w').value);
+            var h = positiveInt(urlEl('h').value);
+            var mode = urlEl('mode').value;
+            if (w) { params.push('w=' + w); }
+            if (h) { params.push('h=' + h); }
+            if (w && h) {
+                /* Always send mode with both sizes; without it Rock drops the smaller one */
+                params.push('mode=' + mode);
+                var anchor = urlEl('anchor').value;
+                if ((mode === 'crop' || mode === 'pad') && anchor !== 'middlecenter') { params.push('anchor=' + anchor); }
+                if (mode === 'pad') { params.push('bgcolor=' + urlEl('bg').value.replace('#', '')); }
+            }
+            if ((w || h) && urlEl('upscale').checked) { params.push('scale=both'); }
+            if (urlEl('format').value) { params.push('format=' + urlEl('format').value); }
+            var quality = positiveInt(urlEl('quality').value);
+            if (outputIsJpg() && quality && quality !== 90) { params.push('quality=' + Math.min(quality, 100)); }
+        }
+
+        var url = path + '?' + params.join('&');
+        return urlEl('absolute').checked ? window.location.origin + url : url;
+    }
+
+    function updateUrlBuilder() {
+        if (!urlImage) { return; }
+        var original = urlEl('original').checked;
+        var both = positiveInt(urlEl('w').value) && positiveInt(urlEl('h').value);
+        var mode = urlEl('mode').value;
+
+        showGroup(urlEl('resize'), !original);
+        urlEl('mode').disabled = !both;
+        urlEl('mode-hint').textContent = both ? modeHints[mode] : 'Set both width and height to choose how the image fits.';
+        showGroup(urlEl('anchor-group'), both && (mode === 'crop' || mode === 'pad'));
+        showGroup(urlEl('bg-group'), both && mode === 'pad');
+        showGroup(urlEl('quality-group'), outputIsJpg());
+
+        var url = buildImageUrl();
+        urlEl('output').value = url;
+        urlEl('open-link').href = url;
+        urlEl('copy').textContent = 'Copy';
+
+        clearTimeout(previewTimer);
+        previewTimer = setTimeout(function () {
+            var preview = urlEl('preview');
+            if (preview.getAttribute('src') === url) { return; }
+            urlEl('size').textContent = 'Loading preview…';
+            preview.setAttribute('src', url);
+        }, 350);
+    }
+
+    urlEl('preview').addEventListener('load', function () {
+        urlEl('size').textContent = 'Output: ' + this.naturalWidth + ' × ' + this.naturalHeight + ' px';
+    });
+    urlEl('preview').addEventListener('error', function () {
+        urlEl('size').textContent = 'Preview failed to load.';
+    });
+
+    urlModal.addEventListener('input', updateUrlBuilder);
+    urlModal.addEventListener('change', updateUrlBuilder);
+    urlModal.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' && e.target.matches('input')) { e.preventDefault(); } /* don't submit the page form */
+    });
+    urlModal.addEventListener('click', function (e) {
+        var preset = e.target.closest('.wti-url-presets [data-mode]');
+        if (preset) {
+            urlEl('original').checked = false;
+            urlEl('w').value = preset.dataset.w;
+            urlEl('h').value = preset.dataset.h;
+            urlEl('mode').value = preset.dataset.mode;
+            updateUrlBuilder();
+            return;
+        }
+        if (e.target.closest('#wti-url-copy')) {
+            var button = urlEl('copy');
+            navigator.clipboard.writeText(urlEl('output').value).then(function () { button.textContent = 'Copied'; });
+        }
+    });
+
+    function openUrlBuilder(data) {
+        if (!data || !data.guid) { return; }
+        urlImage = { guid: data.guid, name: data.name || '', width: data.width || '?', height: data.height || '?' };
+        urlEl('name').textContent = urlImage.name;
+        urlEl('dims').textContent = urlImage.width + ' × ' + urlImage.height;
+        updateUrlBuilder();
+        jQuery(urlModal).modal('show');
+    }
+
+    /* Open from the detail panel (button carries the image) or the filmstrip (uses the active thumbnail) */
+    document.addEventListener('click', function (e) {
+        var opener = e.target.closest('.wti-url-open');
+        if (!opener) { return; }
+        var source = opener.dataset.guid ? opener : document.querySelector('.wti-thumb.is-active');
+        if (source) { openUrlBuilder(source.dataset); }
+    });
+
+    /* Filmstrip: arrow keys step through thumbnails */
+    document.addEventListener('keydown', function (e) {
+        if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') { return; }
+        if (document.body.classList.contains('modal-open')) { return; }
+        if (e.target.closest('input, textarea, select, [contenteditable]')) { return; }
+
+        var target = siblingThumb(e.key === 'ArrowRight' ? 'next' : 'prev');
+        if (target) {
+            e.preventDefault();
+            target.click();
+        }
+    });
+})();
+</script>
+
+{%- comment -%} Styling {%- endcomment -%}
+{% stylesheet %}
+/* Toolbar */
+.wti-toolbar { display: flex; gap: 8px; margin-bottom: 16px; align-items: center; }
+.wti-filters { display: flex; gap: 8px; flex: 1 1 auto; align-items: center; }
+.wti-search-wrap { position: relative; flex: 1 1 auto; display: block; }
+.wti-search { width: 100%; padding-right: 32px; }
+.wti-search::-webkit-search-cancel-button { -webkit-appearance: none; appearance: none; }
+.wti-search-clear {
+    position: absolute; top: 50%; right: 6px; transform: translateY(-50%);
+    width: 24px; height: 24px; padding: 0; border: 0; border-radius: 50%;
+    background: none; font-size: 18px; line-height: 1; cursor: pointer;
+    color: var(--color-interface-medium, #8b8ba7);
+}
+.wti-search-clear:hover { color: var(--color-interface-strongest, #0a0a0a); background: var(--color-interface-soft, #d9d9e3); }
+.wti-search:placeholder-shown + .wti-search-clear { display: none; }
+.wti-sort { flex: 0 0 140px; }
+.wti-upload-btn { flex: 0 0 auto; margin: 0; }
+.wti-file-input { display: none !important; }
+
+/* View toggle */
+.wti-view { display: inline-flex; flex: 0 0 auto; }
+.wti-view label, .wti-toggle { margin: 0; white-space: nowrap; }
+.wti-toggle { flex: 0 0 auto; }
+.wti-view input, .wti-toggle input { position: absolute; opacity: 0; pointer-events: none; }
+.wti-view label:has(input:checked), .wti-toggle:has(input:checked) {
+    background: var(--color-interface-soft, #e6e6e6);
+    color: var(--color-interface-strongest, #0a0a0a);
+    box-shadow: inset 0 2px 4px rgba(0,0,0,.125);
+}
+
+/* Upload queue */
+.wti-queue { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
+.wti-queue[hidden] { display: none !important; }
+.wti-queue-item {
+    display: grid; grid-template-columns: 1fr 160px 140px; gap: 8px; align-items: center;
+    padding: 4px 8px; border: 1px solid var(--color-interface-soft, #d9d9e3); border-radius: 4px; font-size: 12px;
+}
+.wti-queue-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wti-queue-item progress { width: 100%; }
+.wti-queue-item.is-done .wti-queue-state { color: var(--color-success-strong, #3c763d); }
+.wti-queue-item.is-error { border-color: var(--color-danger-strong, #a94442); }
+.wti-queue-item.is-error .wti-queue-state { color: var(--color-danger-strong, #a94442); white-space: normal; }
+
+/* Layout */
+.wti-body { display: flex; gap: 16px; align-items: flex-start; min-height: 200px; border-radius: 8px; }
+.wti-body.is-dragging {
+    outline: 2px dashed var(--color-interface-medium, #8b8ba7); outline-offset: 6px;
+    background: var(--color-interface-softer, #f8f8fc);
+}
+.wti-grid {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 12px;
+}
+.wti-detail:empty { display: none; }
+.wti-detail { flex: 0 0 360px; position: sticky; top: 16px; }
+
+/* Build URL button on grid cards and filmstrip thumbnails (sibling of the tile button) */
+.wti-card-wrap { position: relative; display: flex; }
+.wti-card-wrap > .wti-card { flex: 1 1 auto; width: 100%; }
+.wti-tile-url {
+    position: absolute; top: 6px; right: 6px; z-index: 1;
+    width: 28px; height: 28px; padding: 0; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 13px; cursor: pointer;
+    color: var(--color-interface-strong, #3d444d);
+    background: color-mix(in srgb, var(--color-interface-softest, #fdfdfd) 85%, transparent);
+    border: 1px solid var(--color-interface-soft, #d9d9e3);
+    box-shadow: 0 1px 3px rgba(0,0,0,.25);
+    opacity: 0; transition: opacity .15s ease;
+}
+.wti-thumb-wrap .wti-tile-url { top: 4px; right: 4px; width: 24px; height: 24px; font-size: 11px; }
+.wti-card-wrap:hover .wti-tile-url, .wti-thumb-wrap:hover .wti-tile-url, .wti-tile-url:focus-visible { opacity: 1; }
+@media (hover: none) { .wti-tile-url { opacity: 1; } }
+
+/* Grid cards */
+.wti-card {
+    position: relative;
+    display: flex; flex-direction: column;
+    padding: 0; border: 1px solid var(--color-interface-soft, #d9d9e3); border-radius: 6px;
+    background: var(--color-interface-softest, #fff);
+    color: var(--color-interface-strong, #3d444d);
+    overflow: hidden; text-align: left; cursor: pointer;
+}
+.wti-card:hover, .wti-card:focus-visible { border-color: var(--color-interface-medium, #8b8ba7); outline: none; }
+.wti-card img {
+    display: block; width: 100%; height: auto;
+    aspect-ratio: 4 / 3; object-fit: cover; background: var(--color-interface-soft, #d9d9e3);
+}
+.wti-card-name {
+    padding: 6px 8px; font-size: 12px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.wti-card-deleted {
+    padding: 0 8px 6px; font-size: 11px;
+    color: var(--color-danger-strong, #d70015);
+}
+.wti-more { grid-column: 1 / -1; height: 1px; }
+.wti-empty { grid-column: 1 / -1; color: var(--color-interface-medium, #8b8ba7); }
+
+/* Resolution dots */
+.wti-res {
+    position: absolute; top: 8px; left: 8px;
+    width: 10px; height: 10px; border-radius: 50%;
+    box-shadow: 0 0 0 2px rgba(255,255,255,.9), 0 1px 3px rgba(0,0,0,.4);
+}
+.wti-res.is-low { background: #d32f2f; }
+.wti-res.is-mid { background: #f9a825; }
+.wti-res.is-high { background: #2e7d32; }
+
+/* Filmstrip (Rock interface tokens swap automatically for light/dark/system) */
+.wti-film { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.wti-stage {
+    position: relative; height: 65vh;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--color-interface-softer, #f8f8fc);
+    border: 1px solid var(--color-interface-soft, #d9d9e3);
+    border-radius: 6px; overflow: hidden;
+}
+.wti-stage img { display: block; max-width: 100%; max-height: 100%; object-fit: contain; }
+.wti-stage-caption {
+    position: absolute; left: 0; right: 0; bottom: 0;
+    padding: 6px 10px; font-size: 12px;
+    color: var(--color-interface-strong, #3d444d);
+    background: color-mix(in srgb, var(--color-interface-softest, #fdfdfd) 85%, transparent);
+    border-top: 1px solid var(--color-interface-soft, #d9d9e3);
+}
+.wti-stage-nav {
+    position: absolute; top: 50%; transform: translateY(-50%);
+    width: 44px; height: 44px; padding: 0; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 18px; cursor: pointer;
+    color: var(--color-interface-strong, #3d444d);
+    background: color-mix(in srgb, var(--color-interface-softest, #fdfdfd) 80%, transparent);
+    border: 1px solid var(--color-interface-soft, #d9d9e3);
+    box-shadow: 0 1px 4px rgba(0,0,0,.2);
+    opacity: .75; transition: opacity .15s ease;
+}
+.wti-stage-tools { position: absolute; top: 12px; right: 12px; display: flex; gap: 6px; }
+.wti-stage-btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 5px 12px; border-radius: 16px; font-size: 13px; cursor: pointer;
+    color: var(--color-interface-strong, #3d444d);
+    background: color-mix(in srgb, var(--color-interface-softest, #fdfdfd) 80%, transparent);
+    border: 1px solid var(--color-interface-soft, #d9d9e3);
+    box-shadow: 0 1px 4px rgba(0,0,0,.2);
+}
+.wti-details-toggle.is-active {
+    color: var(--color-interface-softest, #fdfdfd);
+    background: var(--color-interface-strong, #3d444d);
+    border-color: var(--color-interface-strong, #3d444d);
+}
+.wti-stage-nav.is-prev { left: 12px; }
+.wti-stage-nav.is-next { right: 12px; }
+.wti-stage:hover .wti-stage-nav, .wti-stage-nav:focus-visible { opacity: 1; }
+.wti-stage-nav:disabled { opacity: 0 !important; pointer-events: none; }
+.wti-strip { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 6px; }
+.wti-thumb-wrap { position: relative; flex: 0 0 120px; }
+.wti-thumb {
+    position: relative; display: block; width: 100%;
+    padding: 0; border: 2px solid transparent; border-radius: 4px;
+    overflow: hidden; background: none; cursor: pointer;
+}
+.wti-thumb img { display: block; width: 100%; aspect-ratio: 4 / 3; object-fit: cover; background: var(--color-interface-soft, #d9d9e3); }
+.wti-thumb:hover { border-color: var(--color-interface-medium, #8b8ba7); }
+.wti-thumb.is-active { border-color: var(--color-interface-strongest, #0a0a0a); }
+.wti-thumb .wti-res { top: 5px; left: 5px; width: 8px; height: 8px; }
+.wti-strip .wti-more { flex: 0 0 1px; height: auto; }
+
+/* Detail panel */
+.wti-detail-panel {
+    border: 1px solid var(--color-interface-soft, #d9d9e3); border-radius: 6px;
+    background: var(--color-interface-softest, #fff);
+    color: var(--color-interface-strong, #3d444d);
+    padding: 12px;
+}
+.wti-detail-head { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 8px; }
+.wti-detail-name { flex: 1 1 auto; word-break: break-all; color: var(--color-interface-strongest, #0a0a0a); }
+.wti-close { border: 0; background: none; color: inherit; font-size: 20px; line-height: 1; cursor: pointer; }
+.wti-detail-img { display: block; width: 100%; height: auto; border-radius: 4px; }
+.wti-meta {
+    display: grid; grid-template-columns: max-content 1fr;
+    gap: 4px 12px; margin: 12px 0; font-size: 13px;
+}
+.wti-meta dt { font-weight: 600; }
+.wti-meta dd { margin: 0; }
+.wti-copy-label { display: block; font-size: 12px; font-weight: 600; margin-top: 8px; }
+.wti-copy-row { display: flex; align-items: center; gap: 6px; }
+.wti-copy-row code { flex: 1 1 auto; font-size: 11px; word-break: break-all; }
+
+/* Edit form */
+.wti-edit { display: block; margin-top: 4px; }
+.wti-edit .form-group { margin-bottom: 10px; }
+.wti-keywords { display: flex; flex-wrap: wrap; gap: 4px 6px; margin-bottom: 6px; }
+.wti-chip {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 2px 8px; border: 1px solid var(--color-interface-soft, #d9d9e3); border-radius: 12px;
+    font-size: 12px; font-weight: normal; cursor: pointer;
+}
+.wti-chip input { margin: 0; }
+#wti-status:empty { display: none; }
+.wti-saved {
+    color: var(--color-success-strong, #3c763d); font-size: 13px; margin-bottom: 8px;
+    animation: wti-fade 3s ease forwards;
+}
+@keyframes wti-fade { 0%, 70% { opacity: 1; } 100% { opacity: 0; } }
+
+/* Save button states */
+.wti-save .wti-save-busy { display: none; }
+.wti-save.is-busy .wti-save-label { display: none; }
+.wti-save.is-busy .wti-save-busy { display: inline; }
+
+/* URL builder modal */
+.wti-is-hidden { display: none !important; }
+.wti-url-meta { margin-top: 2px; font-size: 12px; color: var(--color-interface-medium, #8b8ba7); word-break: break-all; }
+.wti-url-presets { display: flex; flex-wrap: wrap; gap: 4px; }
+.wti-url-color { display: block; width: 48px; height: 30px; padding: 2px; border: 1px solid var(--color-interface-soft, #d9d9e3); border-radius: 4px; cursor: pointer; }
+.wti-url-preview {
+    display: flex; align-items: center; justify-content: center;
+    height: 260px; margin-top: 12px; overflow: hidden; border-radius: 4px;
+    border: 1px solid var(--color-interface-soft, #d9d9e3);
+    background-color: var(--color-interface-softer, #f8f8fc);
+    background-image: conic-gradient(var(--color-interface-soft, #d9d9e3) 25%, transparent 0 50%, var(--color-interface-soft, #d9d9e3) 0 75%, transparent 0);
+    background-size: 16px 16px;
+}
+.wti-url-preview img { display: block; max-width: 100%; max-height: 100%; object-fit: contain; }
+.wti-url-size { display: flex; justify-content: space-between; gap: 8px; margin-top: 6px; font-size: 12px; color: var(--color-interface-medium, #8b8ba7); }
+
+/* Delete */
+.wti-detail-foot {
+    display: flex; justify-content: flex-end;
+    margin-top: 12px; padding-top: 12px;
+    border-top: 1px solid var(--color-interface-soft, #d9d9e3);
+}
+.wti-delete { color: var(--color-danger-strong, #d70015); }
+.wti-deleted-note { margin: 12px 0 0; font-size: 13px; }
+.wti-delete .wti-delete-busy { display: none; }
+.wti-delete.is-busy .wti-delete-label { display: none; }
+.wti-delete.is-busy .wti-delete-busy { display: inline; }
+{% endstylesheet %}

@@ -1,0 +1,58 @@
+{%- comment -%} Inputs {%- endcomment -%}
+{%- assign fileTypeId = ConfigurationRigging.FileTypeId -%}
+{%- assign fileGuid = Form.guid | Trim | Default:'' -%}
+
+{%- comment -%} The file must belong to this File Type and still be live {%- endcomment -%}
+{%- sql guid:'{{ fileGuid }}' filetypeid:'{{ fileTypeId }}' return:'fileRows' -%}
+SELECT TOP 1 Id, FileName FROM BinaryFile
+WHERE Guid = TRY_CAST(@guid AS uniqueidentifier)
+  AND BinaryFileTypeId = @filetypeid
+  AND IsTemporary = 0;
+{%- endsql -%}
+{%- assign fileRowCount = fileRows | Size -%}
+{%- assign fileRow = fileRows | First -%}
+
+{%- comment -%}
+    Mark as temporary instead of hard-deleting. It leaves the gallery at once, and
+    the Rock Cleanup job removes the record and its blob after a day.
+{%- endcomment -%}
+{%- assign deleteSuccess = false -%}
+{%- assign deleteError = '' -%}
+{%- if fileRowCount == 1 -%}
+    {%- modifybinaryfile id:'{{ fileGuid }}' -%}
+        [[ property name:'IsTemporary' ]]True[[ endproperty ]]
+    {%- endmodifybinaryfile -%}
+    {%- assign deleteSuccess = ModifyResult.Success -%}
+    {%- assign deleteError = ModifyResult.ErrorMessage -%}
+    {%- assign deleteValidation = ModifyResult.ValidationErrors -%}
+{%- endif -%}
+
+{%- comment -%} Response (swapped into #wti-detail) {%- endcomment -%}
+<div class="wti-detail-panel"{% if deleteSuccess %} data-wti-deleted{% endif %}>
+    <div class="wti-detail-head">
+        <strong class="wti-detail-name">{{ fileRow.FileName | Default:'Image' | Escape }}</strong>
+        <button type="button" class="wti-close" aria-label="Close"
+                onclick="this.closest('#wti-detail').innerHTML='';">&times;</button>
+    </div>
+    {%- if fileRowCount != 1 -%}
+    <div class="alert alert-warning">Image not found. It may already have been deleted.</div>
+    {%- elsif deleteSuccess -%}
+    <div class="alert alert-success"><i class="fa fa-check"></i> Deleted. You can get it back with the Recover button in the toolbar for about a day, until Rock's cleanup job removes it.</div>
+    <button type="button" class="btn btn-default btn-sm wti-restore"
+            hx-post="^/web-theme-images/restore"
+            hx-vals='{"guid": "{{ fileGuid | Escape }}"}'
+            hx-target="#wti-detail"
+            hx-on::before-request="this.disabled = true;"
+            hx-on::after-request="this.disabled = false;">
+        <i class="fa fa-undo"></i> Undo
+    </button>
+    {%- else -%}
+    <div class="alert alert-warning">
+        <strong>{{ deleteError | Default:'Delete failed.' | Escape }}</strong>
+        {%- for message in deleteValidation %}<br>{{ message.ErrorMessage | Escape }}{% endfor -%}
+    </div>
+    <button type="button" class="btn btn-default btn-sm"
+            hx-get="^/web-theme-images/detail?guid={{ fileGuid | EscapeDataString }}"
+            hx-target="#wti-detail">Back</button>
+    {%- endif -%}
+</div>
