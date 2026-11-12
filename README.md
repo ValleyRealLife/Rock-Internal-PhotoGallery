@@ -11,6 +11,7 @@ Built and tested on Rock v18. Lava Applications and endpoints are required.
 - **Resolution dot on each thumbnail.** Red, yellow, or green, by the original's longest edge.
 - **Star ratings.** Each thumbnail shows its rating (⊘ for none, or 1–5 stars). Rate from the details panel, from the stars under the filmstrip viewer, or with keys 0–5. A Lightroom-style filter next to search shows images at, above, or below a rating.
 - **Upload by button or drag-and-drop.** Files upload one at a time with progress, and the first new image opens in the details panel.
+- **Metadata import on upload.** Description, rating, and keywords embedded by Lightroom, Bridge, Photo Mechanic, and similar tools (XMP) are applied to each new image. See [Metadata import](#metadata-import).
 - **Details panel.** Edit the description, keywords (editors can add new ones), and audience, and copy the GUID.
 - **Image URL builder.** Opens from a thumbnail, the filmstrip, or the details panel. Set width, height, fit (fit within, crop, pad, stretch), focus point, padding color, format, quality, and upscaling, with a live preview and the actual output size.
 - **Delete with recover.** Deleting is soft. The image can be recovered until Rock's cleanup job removes it, about a day later.
@@ -157,9 +158,23 @@ Useful `GetImage.ashx` options: `w`, `h`, `mode` (`max`, `crop`, `pad`, `stretch
 
 If you set both `w` and `h` without `mode`, Rock keeps only the larger of the two. Always include `mode` when you give both. The URL builder does this for you.
 
+## Metadata import
+
+Before each file uploads, the browser reads the file's embedded XMP metadata. After the upload, it saves what it found through the `update` and `rate` endpoints. Nothing extra needs to be installed.
+
+| Gallery field | Read from (first found) |
+|---|---|
+| Description | `dc:description` (Lightroom "Caption"), then `dc:title`, then `photoshop:Headline` |
+| Rating | `xmp:Rating`. Rejected (`-1`) becomes no rating |
+| Keywords | `dc:subject` (Lightroom/Bridge keywords) |
+
+- **Keywords are lowercased.** Spaces are collapsed, and commas inside a keyword become spaces. Each keyword is matched to an existing one, regardless of case, or created. Keywords typed in the details panel are lowercased the same way.
+- **Upload queue status.** Each row shows what was applied, for example `Done · description, 3 keywords, 4★`. If the image uploaded but its metadata couldn't be saved, the row stays visible and says why.
+- **When nothing comes through:** files without XMP upload as before. Many exports strip metadata, so in Lightroom export with **Include: All Metadata** (or at least "All Except Camera & Camera Raw Info").
+
 ## How delete and recover work
 
-Delete marks the image as temporary (`IsTemporary = 1`). It leaves the gallery immediately, but the record, its keywords, and the stored file are untouched.
+Delete marks the image as temporary (`IsTemporary = 1`). It leaves the gallery immediately, but the record, its keywords, and the stored file are untouched. The details panel closes and a dialog confirms the delete with an **Undo** button.
 
 Rock's **Rock Cleanup** job permanently removes temporary files (record and stored file) whose last change is more than one day old. Until then, the toolbar's **Recover** toggle lists deleted images and **Recover** puts them back with the same GUID. The one-day window is fixed in Rock.
 

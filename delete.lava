@@ -27,8 +27,15 @@ WHERE Guid = TRY_CAST(@guid AS uniqueidentifier)
     {%- assign deleteValidation = ModifyResult.ValidationErrors -%}
 {%- endif -%}
 
-{%- comment -%} Response (swapped into #wti-detail) {%- endcomment -%}
-<div class="wti-detail-panel"{% if deleteSuccess %} data-wti-deleted{% endif %}>
+{%- comment -%}
+    Response (swapped into #wti-detail).
+    Success: only a marker. content.lava closes the panel, refreshes the gallery,
+    and shows a modal with an Undo button.
+{%- endcomment -%}
+{%- if deleteSuccess -%}
+<div data-wti-deleted data-guid="{{ fileGuid | Escape }}" data-name="{{ fileRow.FileName | Default:'Image' | Escape }}"></div>
+{%- else -%}
+<div class="wti-detail-panel">
     <div class="wti-detail-head">
         <strong class="wti-detail-name">{{ fileRow.FileName | Default:'Image' | Escape }}</strong>
         <button type="button" class="wti-close" aria-label="Close"
@@ -36,16 +43,6 @@ WHERE Guid = TRY_CAST(@guid AS uniqueidentifier)
     </div>
     {%- if fileRowCount != 1 -%}
     <div class="alert alert-warning">Image not found. It may already have been deleted.</div>
-    {%- elsif deleteSuccess -%}
-    <div class="alert alert-success"><i class="fa fa-check"></i> Deleted. You can get it back with the Recover button in the toolbar for about a day, until Rock's cleanup job removes it.</div>
-    <button type="button" class="btn btn-default btn-sm wti-restore"
-            hx-post="^/web-theme-images/restore"
-            hx-vals='{"guid": "{{ fileGuid | Escape }}"}'
-            hx-target="#wti-detail"
-            hx-on::before-request="this.disabled = true;"
-            hx-on::after-request="this.disabled = false;">
-        <i class="fa fa-undo"></i> Undo
-    </button>
     {%- else -%}
     <div class="alert alert-warning">
         <strong>{{ deleteError | Default:'Delete failed.' | Escape }}</strong>
@@ -56,3 +53,4 @@ WHERE Guid = TRY_CAST(@guid AS uniqueidentifier)
             hx-target="#wti-detail">Back</button>
     {%- endif -%}
 </div>
+{%- endif -%}

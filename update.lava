@@ -23,10 +23,13 @@ WHERE DefinedTypeId = @dt
 {%- endsql -%}
 {%- capture keywordList -%}{%- for r in kwRows -%}{{ r.Guid }},{%- endfor -%}{%- endcapture -%}
 
-{%- comment -%} New keywords: reuse an existing value with the same text, else create it {%- endcomment -%}
+{%- comment -%}
+    New keywords: lowercased and whitespace-collapsed, then reuse an existing value with
+    the same text (SQL match is case-insensitive), else create it in lowercase.
+{%- endcomment -%}
 {%- assign newNames = newKeywordsIn | Split:',' -%}
 {%- for rawName in newNames -%}
-    {%- assign kwName = rawName | Trim -%}
+    {%- assign kwName = rawName | RegExReplace:'[ ]+',' ' | Trim | Downcase -%}
     {%- if kwName != '' -%}
         {%- sql n:'{{ kwName }}' dt:'{{ keywordTypeId }}' return:'existingRows' -%}
 SELECT TOP 1 LOWER(CAST(Guid AS varchar(36))) AS Guid FROM DefinedValue

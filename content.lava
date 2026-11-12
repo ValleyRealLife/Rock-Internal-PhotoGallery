@@ -200,6 +200,8 @@
 (function () {
     var fileTypeGuid = '{{ fileTypeGuid }}';
     var detailUrl = '/api/v2/lava-app/1/{{ appSlug }}/detail?guid=';
+    var updateUrl = '/api/v2/lava-app/1/{{ appSlug }}/update';
+    var restoreUrl = '/api/v2/lava-app/1/{{ appSlug }}/restore';
     var input = document.getElementById('wti-file-input');
     var dropZone = document.getElementById('wti-drop');
     var queue = document.getElementById('wti-queue');
@@ -207,6 +209,130 @@
 
     if (!input || input.dataset.bound) { return; }
     input.dataset.bound = '1';
+
+    /* ---------- Embedded metadata (XMP from Lightroom, Bridge, Photo Mechanic, ...) ---------- */
+    var NS_RDF = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#';
+    var NS_DC = 'http://purl.org/dc/elements/1.1/';
+    var NS_XMP = 'http://ns.adobe.com/xap/1.0/';
+    var NS_PS = 'http://ns.adobe.com/photoshop/1.0/';
+    var XMP_PACKET = /<x:x[am]pmeta[\s\S]*?<\/x:x[am]pmeta>/;
+
+    function readText(blob) {
+        return blob.arrayBuffer().then(function (buffer) {
+            return new TextDecoder('utf-8').decode(buffer);
+        });
+    }
+
+    /* XMP sits near the start of JPEGs; some formats put it near the end */
+    function findXmp(file) {
+        var head = 2 * 1024 * 1024;
+        return readText(file.slice(0, head)).then(function (text) {
+            var match = text.match(XMP_PACKET);
+            if (match || file.size <= head) { return match ? match[0] : null; }
+            return readText(file.slice(Math.max(head, file.size - 1024 * 1024))).then(function (tail) {
+                var tailMatch = tail.match(XMP_PACKET);
+                return tailMatch ? tailMatch[0] : null;
+            });
+        });
+    }
+
+    /* Text of an rdf:Alt (x-default first), rdf:Bag/Seq first item, or a plain element */
+    function xmpText(doc, ns, name) {
+        var el = doc.getElementsByTagNameNS(ns, name)[0];
+        if (!el) {
+            var attrHost = Array.prototype.find.call(doc.getElementsByTagNameNS(NS_RDF, 'Description'), function (d) {
+                return d.hasAttributeNS(ns, name);
+            });
+            return attrHost ? attrHost.getAttributeNS(ns, name).trim() : '';
+        }
+        var items = el.getElementsByTagNameNS(NS_RDF, 'li');
+        if (!items.length) { return el.textContent.trim(); }
+        var preferred = Array.prototype.find.call(items, function (li) {
+            return li.getAttribute('xml:lang') === 'x-default';
+        });
+        return (preferred || items[0]).textContent.trim();
+    }
+
+    function normalizeKeyword(value) {
+        return value.replace(/,/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase();
+    }
+
+    function parseXmp(xml) {
+        var doc = new DOMParser().parseFromString(xml, 'application/xml');
+        if (doc.getElementsByTagName('parsererror').length) { return null; }
+
+        var description = xmpText(doc, NS_DC, 'description') || xmpText(doc, NS_DC, 'title') || xmpText(doc, NS_PS, 'Headline');
+
+        var ratingText = xmpText(doc, NS_XMP, 'Rating');
+        var rating = Math.round(parseFloat(ratingText));
+        if (isNaN(rating) || rating < 0) { rating = 0; } /* -1 = rejected in Lightroom/Bridge */
+        if (rating > 5) { rating = 5; }
+
+        var keywords = [];
+        var subject = doc.getElementsByTagNameNS(NS_DC, 'subject')[0];
+        if (subject) {
+            Array.prototype.forEach.call(subject.getElementsByTagNameNS(NS_RDF, 'li'), function (li) {
+                var k = normalizeKeyword(li.textContent);
+                if (k && keywords.indexOf(k) < 0 && keywords.length < 50) { keywords.push(k); }
+            });
+        }
+
+        if (!description && !rating && !keywords.length) { return null; }
+        return { description: description, rating: rating, keywords: keywords };
+    }
+
+    function readMetadata(file) {
+        return findXmp(file)
+            .then(function (xml) { return xml ? parseXmp(xml) : null; })
+            .catch(function () { return null; }); /* metadata is optional; never block the upload */
+    }
+
+    /* POST form fields to an endpoint and require a success marker in the reply.
+       Same CSRF header Helix adds to htmx requests. */
+    function postForm(url, data, okSelector) {
+        return fetch(url, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+                'X-Helix-CSRF-Protection': 'true',
+                'HX-Request': 'true'
+            },
+            body: new URLSearchParams(data).toString()
+        }).then(function (response) {
+            return response.text().then(function (text) {
+                if (!response.ok) {
+                    throw new Error('Request failed (' + response.status + ' ' + response.statusText + '): ' + url);
+                }
+                var reply = document.createElement('template');
+                reply.innerHTML = text;
+                if (reply.content.querySelector(okSelector)) { return; }
+                throw new Error(reply.content.textContent.trim().replace(/\s+/g, ' ') || 'Unexpected reply from ' + url);
+            });
+        });
+    }
+
+    /* Save imported metadata onto a just-uploaded image */
+    function applyMetadata(guid, meta) {
+        var saved = [];
+        var steps = Promise.resolve();
+        if (meta.description || meta.keywords.length) {
+            steps = steps.then(function () {
+                return postForm(updateUrl, { guid: guid, description: meta.description, newkeywords: meta.keywords.join(',') }, '.wti-saved');
+            }).then(function () {
+                if (meta.description) { saved.push('description'); }
+                if (meta.keywords.length) { saved.push(meta.keywords.length + ' keyword' + (meta.keywords.length > 1 ? 's' : '')); }
+            });
+        }
+        if (meta.rating) {
+            steps = steps.then(function () {
+                return postForm(rateUrl, { guid: guid, rating: String(meta.rating) }, '.wti-rate-ok');
+            }).then(function () {
+                saved.push(meta.rating + '★');
+            });
+        }
+        return steps.then(function () { return saved; });
+    }
 
     /* Upload */
     function uploadOne(file) {
@@ -219,6 +345,7 @@
 
             var bar = row.querySelector('progress');
             var state = row.querySelector('.wti-queue-state');
+            var metadata = readMetadata(file);
             var data = new FormData();
             data.append('file', file, file.name);
 
@@ -235,9 +362,28 @@
                     var result = null;
                     try { result = JSON.parse(xhr.responseText); } catch (err) { }
                     bar.value = 100;
-                    state.textContent = 'Done';
-                    row.classList.add('is-done');
-                    resolve(result);
+                    if (!result || !result.Guid) {
+                        state.textContent = 'Done';
+                        row.classList.add('is-done');
+                        resolve(result);
+                        return;
+                    }
+                    state.textContent = 'Reading metadata…';
+                    metadata.then(function (meta) {
+                        if (!meta) { return []; }
+                        state.textContent = 'Saving metadata…';
+                        return applyMetadata(result.Guid, meta);
+                    }).then(function (saved) {
+                        state.textContent = saved.length ? 'Done · ' + saved.join(', ') : 'Done';
+                        state.title = state.textContent;
+                        row.classList.add('is-done');
+                        resolve(result);
+                    }).catch(function (error) {
+                        /* The image is uploaded; only the metadata failed. Keep the row visible. */
+                        state.textContent = 'Uploaded · metadata not saved: ' + (error && error.message ? error.message : 'unknown error');
+                        row.classList.add('is-warning');
+                        resolve(result);
+                    });
                 } else {
                     state.textContent = xhr.responseText || ('Error ' + xhr.status);
                     row.classList.add('is-error');
@@ -484,30 +630,9 @@
         }
     }
 
-    /* POST the rating and read the endpoint's reply directly (no htmx swap involved).
-       Sends the same CSRF header Helix adds to htmx requests. */
+    /* POST the rating and read the endpoint's reply directly (no htmx swap involved) */
     function postRating(guid, n) {
-        return fetch(rateUrl, {
-            method: 'POST',
-            credentials: 'same-origin',
-            headers: {
-                'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-                'X-Helix-CSRF-Protection': 'true',
-                'HX-Request': 'true'
-            },
-            body: new URLSearchParams({ guid: guid, rating: String(n) }).toString()
-        }).then(function (response) {
-            return response.text().then(function (text) {
-                if (!response.ok) {
-                    throw new Error('Rating not saved (' + response.status + ' ' + response.statusText + ').');
-                }
-                var reply = document.createElement('template');
-                reply.innerHTML = text;
-                if (reply.content.querySelector('.wti-rate-ok')) { return; }
-                var message = reply.content.textContent.trim();
-                throw new Error(message || 'Rating not saved: unexpected reply from the rate endpoint.');
-            });
-        });
+        return postForm(rateUrl, { guid: guid, rating: String(n) }, '.wti-rate-ok');
     }
 
     /* Optimistic update, then save; requests run one at a time so the last click wins */
@@ -601,13 +726,62 @@
         reportFailure(e, 'Network error: ' + e.detail.pathInfo.requestPath);
     });
 
-    /* Delete / restore: refresh the grid once the detail panel reports either */
+    /* Delete: close the panel, refresh the gallery, and offer Undo in a modal.
+       Recover (restore): refresh the gallery. */
     document.body.addEventListener('htmx:afterSwap', function (e) {
         var target = e.detail && e.detail.target;
-        if (target && target.id === 'wti-detail' && target.querySelector('[data-wti-deleted], [data-wti-restored]')) {
+        if (!target || target.id !== 'wti-detail') { return; }
+
+        var deleted = target.querySelector('[data-wti-deleted]');
+        if (deleted) {
+            var guid = deleted.dataset.guid;
+            var name = deleted.dataset.name;
+            target.innerHTML = '';
+            htmx.trigger(grid, 'wti:refresh');
+            showDeletedModal(guid, name);
+            return;
+        }
+        if (target.querySelector('[data-wti-restored]')) {
             htmx.trigger(grid, 'wti:refresh');
         }
     });
+
+    function showDeletedModal(guid, name) {
+        var message =
+            '<p><strong>' + escapeHtml(name) + '</strong> was deleted.</p>' +
+            '<p>You can get it back with <strong>Recover</strong> in the toolbar for about a day, until Rock’s cleanup job removes it.</p>';
+
+        if (!window.bootbox) {
+            if (window.confirm(name + ' was deleted.\n\nUndo?')) { undoDelete(guid); }
+            return;
+        }
+        bootbox.dialog({
+            message: message,
+            buttons: {
+                undo: {
+                    label: '<i class="fa fa-undo"></i> Undo',
+                    className: 'btn-default',
+                    callback: function () { undoDelete(guid); }
+                },
+                ok: {
+                    label: 'OK',
+                    className: 'btn-primary'
+                }
+            }
+        });
+    }
+
+    /* Undo = recover, then bring the image back into view with its details open */
+    function undoDelete(guid) {
+        postForm(restoreUrl, { guid: guid }, '[data-wti-restored]').then(function () {
+            pendingGuid = guid.toLowerCase(); /* filmstrip re-selects it after the refresh */
+            pendingPages = 0;
+            htmx.trigger(grid, 'wti:refresh');
+            htmx.ajax('GET', detailUrl + encodeURIComponent(guid) + '&restored=1', { target: '#wti-detail' });
+        }).catch(function (error) {
+            reportFailure({ target: grid }, error && error.message ? error.message : 'Undo failed.');
+        });
+    }
 
     /* Recently deleted: switching lists closes the open panel */
     document.addEventListener('change', function (e) {
@@ -791,7 +965,7 @@
 .wti-queue { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
 .wti-queue[hidden] { display: none !important; }
 .wti-queue-item {
-    display: grid; grid-template-columns: 1fr 160px 140px; gap: 8px; align-items: center;
+    display: grid; grid-template-columns: minmax(0, 1fr) 160px minmax(140px, 1fr); gap: 8px; align-items: center;
     padding: 4px 8px; border: 1px solid var(--color-interface-soft, #d9d9e3); border-radius: 4px; font-size: 12px;
 }
 .wti-queue-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -799,6 +973,12 @@
 .wti-queue-item.is-done .wti-queue-state { color: var(--color-success-strong, #3c763d); }
 .wti-queue-item.is-error { border-color: var(--color-danger-strong, #a94442); }
 .wti-queue-item.is-error .wti-queue-state { color: var(--color-danger-strong, #a94442); white-space: normal; }
+.wti-queue-state { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wti-queue-item.is-warning { border-color: var(--color-warning-strong, #e58600); }
+.wti-queue-item.is-warning .wti-queue-state { color: var(--color-warning-strong, #e58600); white-space: normal; }
+
+/* Keywords typed in the details panel are saved lowercase */
+.wti-newkeywords { text-transform: lowercase; }
 
 /* Layout */
 .wti-body { display: flex; gap: 16px; align-items: flex-start; min-height: 200px; border-radius: 8px; }
