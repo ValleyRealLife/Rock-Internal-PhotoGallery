@@ -1,0 +1,36 @@
+{%- comment -%} Inputs {%- endcomment -%}
+{%- assign fileTypeId = ConfigurationRigging.FileTypeId -%}
+{%- assign fileGuid = Form.guid | Trim | Default:'' -%}
+{%- assign rating = Form.rating | Trim | Default:'' -%}
+{%- assign ratingValues = '0,1,2,3,4,5' | Split:',' -%}
+
+{%- comment -%} The file must belong to this File Type and be live {%- endcomment -%}
+{%- sql guid:'{{ fileGuid }}' filetypeid:'{{ fileTypeId }}' return:'fileRows' -%}
+SELECT TOP 1 Id FROM BinaryFile
+WHERE Guid = TRY_CAST(@guid AS uniqueidentifier)
+  AND BinaryFileTypeId = @filetypeid
+  AND IsTemporary = 0;
+{%- endsql -%}
+{%- assign fileRowCount = fileRows | Size -%}
+
+{%- comment -%} Save only the Rating attribute; results are copied out of ModifyResult right away {%- endcomment -%}
+{%- assign rateSuccess = false -%}
+{%- assign rateError = '' -%}
+{%- if fileRowCount == 1 and ratingValues contains rating -%}
+    {%- modifybinaryfile id:'{{ fileGuid }}' -%}
+        [[ attribute key:'Rating' ]]{{ rating }}[[ endattribute ]]
+    {%- endmodifybinaryfile -%}
+    {%- assign rateSuccess = ModifyResult.Success -%}
+    {%- assign rateError = ModifyResult.ErrorMessage -%}
+{%- endif -%}
+
+{%- comment -%} Response (read by fetch in content.lava: .wti-rate-ok means saved, anything else is the error text) {%- endcomment -%}
+{%- if rateSuccess -%}
+<span class="wti-rate-ok" data-guid="{{ fileGuid | Escape }}" data-rating="{{ rating }}"></span>
+{%- elsif fileRowCount != 1 -%}
+<span class="wti-rate-error">Rating not saved: image not found.</span>
+{%- elsif ratingValues contains rating -%}
+<span class="wti-rate-error">Rating not saved: {{ rateError | Default:'unknown error' | Escape }}</span>
+{%- else -%}
+<span class="wti-rate-error">Rating not saved: the rating must be 0 to 5.</span>
+{%- endif -%}

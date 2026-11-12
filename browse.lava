@@ -17,11 +17,19 @@
 {%- if view != 'filmstrip' -%}{%- assign view = 'grid' -%}{%- endif -%}
 {%- assign deleted = QueryString.deleted | AsBoolean -%}
 {%- assign deletedFlag = 0 -%}{%- if deleted -%}{%- assign deletedFlag = 1 -%}{%- endif -%}
+
+{%- comment -%} Rating filter: rating 0-5 (blank = off), ratingop gte | eq | lte {%- endcomment -%}
+{%- assign ratingValues = '0,1,2,3,4,5' | Split:',' -%}
+{%- assign rating = QueryString.rating | Trim | Default:'' -%}
+{%- unless ratingValues contains rating -%}{%- assign rating = '' -%}{%- endunless -%}
+{%- assign ratingOp = QueryString.ratingop | Default:'gte' -%}
+{%- if ratingOp != 'eq' and ratingOp != 'lte' -%}{%- assign ratingOp = 'gte' -%}{%- endif -%}
+
 {%- assign offset = page | Minus:1 | Times:pageSize -%}
 {%- assign take = pageSize | Plus:1 -%}
 
 {%- comment -%} Query: one extra row tells us whether another page exists {%- endcomment -%}
-{%- sql filetypeid:'{{ fileTypeId }}' keywordtypeid:'{{ keywordTypeId }}' q:'{{ q }}' keyword:'{{ keyword }}' audience:'{{ audience }}' sort:'{{ sort }}' deleted:'{{ deletedFlag }}' offset:'{{ offset }}' take:'{{ take }}' -%}
+{%- sql filetypeid:'{{ fileTypeId }}' keywordtypeid:'{{ keywordTypeId }}' q:'{{ q }}' keyword:'{{ keyword }}' audience:'{{ audience }}' sort:'{{ sort }}' deleted:'{{ deletedFlag }}' rating:'{{ rating }}' ratingop:'{{ ratingOp }}' offset:'{{ offset }}' take:'{{ take }}' -%}
 DECLARE @BinaryFileEntityTypeId int = (SELECT Id FROM EntityType WHERE Name = 'Rock.Model.BinaryFile');
 DECLARE @KeywordsAttributeId int = (
     SELECT Id FROM Attribute
@@ -33,16 +41,29 @@ DECLARE @AudienceAttributeId int = (
     WHERE EntityTypeId = @BinaryFileEntityTypeId AND [Key] = 'Audience'
       AND EntityTypeQualifierColumn = 'BinaryFileTypeId'
       AND EntityTypeQualifierValue = CAST(@filetypeid AS varchar(10)));
+DECLARE @RatingAttributeId int = (
+    SELECT Id FROM Attribute
+    WHERE EntityTypeId = @BinaryFileEntityTypeId AND [Key] = 'Rating'
+      AND EntityTypeQualifierColumn = 'BinaryFileTypeId'
+      AND EntityTypeQualifierValue = CAST(@filetypeid AS varchar(10)));
+DECLARE @RatingFilter int = TRY_CAST(NULLIF(@rating, '') AS int);
 
 SELECT bf.Id, bf.Guid, bf.FileName, bf.Description, bf.Width, bf.Height, bf.CreatedDateTime, bf.ModifiedDateTime,
-       CASE WHEN ISNULL(bf.Width, 0) >= ISNULL(bf.Height, 0) THEN ISNULL(bf.Width, 0) ELSE ISNULL(bf.Height, 0) END AS LongEdge
+       CASE WHEN ISNULL(bf.Width, 0) >= ISNULL(bf.Height, 0) THEN ISNULL(bf.Width, 0) ELSE ISNULL(bf.Height, 0) END AS LongEdge,
+       r.Rating
 FROM BinaryFile bf
 LEFT JOIN AttributeValue kw ON kw.AttributeId = @KeywordsAttributeId AND kw.EntityId = bf.Id
 LEFT JOIN AttributeValue aud ON aud.AttributeId = @AudienceAttributeId AND aud.EntityId = bf.Id
+LEFT JOIN AttributeValue rt ON rt.AttributeId = @RatingAttributeId AND rt.EntityId = bf.Id
+CROSS APPLY (SELECT ISNULL(CAST(TRY_CAST(NULLIF(rt.Value, '') AS decimal(9, 2)) AS int), 0) AS Rating) r
 WHERE bf.BinaryFileTypeId = @filetypeid
   AND bf.IsTemporary = CAST(@deleted AS bit)
   AND (@audience = '' OR ',' + ISNULL(aud.Value, '') + ',' LIKE '%,' + @audience + ',%')
   AND (@keyword = '' OR ',' + ISNULL(kw.Value, '') + ',' LIKE '%,' + @keyword + ',%')
+  AND (@RatingFilter IS NULL
+       OR (@ratingop = 'gte' AND r.Rating >= @RatingFilter)
+       OR (@ratingop = 'eq'  AND r.Rating =  @RatingFilter)
+       OR (@ratingop = 'lte' AND r.Rating <= @RatingFilter))
   AND (@q = ''
        OR bf.FileName LIKE '%' + @q + '%'
        OR bf.Description LIKE '%' + @q + '%'
@@ -62,20 +83,22 @@ OFFSET CAST(@offset AS int) ROWS FETCH NEXT CAST(@take AS int) ROWS ONLY;
 {%- assign rowCount = results | Size -%}
 {%- assign hasMore = false -%}
 {%- if rowCount > pageSize -%}{%- assign hasMore = true -%}{%- endif -%}
-{%- capture nextUrl -%}^/web-theme-images/browse?page={{ page | Plus:1 }}&view={{ view }}&q={{ q | EscapeDataString }}&keyword={{ keyword | EscapeDataString }}&audience={{ audience | EscapeDataString }}&sort={{ sort | EscapeDataString }}&deleted={{ deletedFlag }}{%- endcapture -%}
+{%- capture nextUrl -%}^/web-theme-images/browse?page={{ page | Plus:1 }}&view={{ view }}&q={{ q | EscapeDataString }}&keyword={{ keyword | EscapeDataString }}&audience={{ audience | EscapeDataString }}&sort={{ sort | EscapeDataString }}&deleted={{ deletedFlag }}&rating={{ rating }}&ratingop={{ ratingOp }}{%- endcapture -%}
 {%- capture sentinel -%}{%- if hasMore -%}<div class="wti-more" hx-get="{{ nextUrl }}" hx-trigger="intersect once" hx-swap="outerHTML"></div>{%- endif -%}{%- endcapture -%}
 
 {%- comment -%} Markup {%- endcomment -%}
 {%- if page == 1 and rowCount == 0 -%}
-<p class="wti-empty">{% if deleted %}No recently deleted images.{% else %}No images match.{% endif %}</p>
+<p class="wti-empty">{% if deleted %}No recently deleted images{% else %}No images match{% endif %}{% if rating != '' %} at this rating{% endif %}.</p>
 
 {%- elsif view == 'filmstrip' -%}
 {%- capture thumbs -%}
 {%- for row in results limit:pageSize -%}
 {%- assign longEdge = row.LongEdge | AsInteger | Default:0 -%}
+{%- assign stars = row.Rating | AsInteger | Default:0 -%}
 <div class="wti-thumb-wrap">
 <button type="button" class="wti-thumb{% if page == 1 and forloop.first %} is-active{% endif %}"
         data-guid="{{ row.Guid }}"
+        data-rating="{{ stars }}"
         data-width="{{ row.Width }}"
         data-height="{{ row.Height }}"
         data-stage="/GetImage.ashx?guid={{ row.Guid }}&w={{ previewWidth }}"
@@ -86,6 +109,9 @@ OFFSET CAST(@offset AS int) ROWS FETCH NEXT CAST(@take AS int) ROWS ONLY;
     {%- elsif longEdge < highResMinEdge -%}<span class="wti-res is-mid" title="Medium res · {{ longEdge }} px"></span>
     {%- else -%}<span class="wti-res is-high" title="High res · {{ longEdge }} px"></span>
     {%- endif -%}
+    {%- endif -%}
+    {%- if stars == 0 -%}<span class="wti-rating is-none" title="No rating">&#8856;</span>
+    {%- else -%}<span class="wti-rating" title="{{ stars }} of 5 stars">{% for i in (1..5) %}<i{% if i <= stars %} class="is-on"{% endif %}>&#9733;</i>{% endfor %}</span>
     {%- endif -%}
 </button>
 <button type="button" class="wti-tile-url wti-url-open" title="Build URL" aria-label="Build URL for {{ row.FileName | Escape }}"
@@ -99,7 +125,15 @@ OFFSET CAST(@offset AS int) ROWS FETCH NEXT CAST(@take AS int) ROWS ONLY;
 <div class="wti-film">
     <div class="wti-stage">
         <img id="wti-stage-img" src="/GetImage.ashx?guid={{ firstRow.Guid }}&w={{ previewWidth }}" alt="">
-        <div class="wti-stage-caption" id="wti-stage-caption">{{ firstRow.FileName | Escape }}</div>
+        <div class="wti-stage-caption">
+            <span class="wti-stage-name" id="wti-stage-caption">{{ firstRow.FileName | Escape }}</span>
+            <span class="wti-stage-rating" id="wti-stage-rating" title="Rate this image (keys 0–5)">
+                <button type="button" class="wti-rate-btn is-none" data-rate="0" aria-label="No rating">&#8856;</button>
+                {%- for i in (1..5) -%}
+                <button type="button" class="wti-rate-btn" data-rate="{{ i }}" aria-label="{{ i }} star{% if i > 1 %}s{% endif %}">&#9733;</button>
+                {%- endfor -%}
+            </span>
+        </div>
         <div class="wti-stage-tools">
             <button type="button" class="wti-stage-btn wti-url-open" title="Build an image URL"><i class="fa fa-link"></i> Build URL</button>
             <button type="button" class="wti-stage-btn wti-details-toggle" aria-pressed="false" title="Show or hide details"><i class="fa fa-info-circle"></i> Details</button>
@@ -120,14 +154,22 @@ OFFSET CAST(@offset AS int) ROWS FETCH NEXT CAST(@take AS int) ROWS ONLY;
 {%- else -%}
 {%- for row in results limit:pageSize -%}
 {%- assign longEdge = row.LongEdge | AsInteger | Default:0 -%}
+{%- assign stars = row.Rating | AsInteger | Default:0 -%}
 <div class="wti-card-wrap">
 <button type="button" class="wti-card"
+        data-guid="{{ row.Guid }}"
+        data-rating="{{ stars }}"
         hx-get="^/web-theme-images/detail?guid={{ row.Guid }}"
         hx-target="#wti-detail">
-    <img src="/GetImage.ashx?guid={{ row.Guid }}&w={{ thumbWidth }}"
-         alt="{{ row.Description | Default:row.FileName | Escape }}"
-         loading="lazy"
-         {%- if row.Width and row.Height %} width="{{ row.Width }}" height="{{ row.Height }}"{% endif %}>
+    <span class="wti-card-media">
+        <img src="/GetImage.ashx?guid={{ row.Guid }}&w={{ thumbWidth }}"
+             alt="{{ row.Description | Default:row.FileName | Escape }}"
+             loading="lazy"
+             {%- if row.Width and row.Height %} width="{{ row.Width }}" height="{{ row.Height }}"{% endif %}>
+        {%- if stars == 0 -%}<span class="wti-rating is-none" title="No rating">&#8856;</span>
+        {%- else -%}<span class="wti-rating" title="{{ stars }} of 5 stars">{% for i in (1..5) %}<i{% if i <= stars %} class="is-on"{% endif %}>&#9733;</i>{% endfor %}</span>
+        {%- endif -%}
+    </span>
     {%- if longEdge > 0 -%}
     {%- if longEdge <= lowResMaxEdge -%}<span class="wti-res is-low" title="Low res · {{ longEdge }} px"></span>
     {%- elsif longEdge < highResMinEdge -%}<span class="wti-res is-mid" title="Medium res · {{ longEdge }} px"></span>

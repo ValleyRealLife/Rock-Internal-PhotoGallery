@@ -16,6 +16,24 @@
                        hx-include="#wti-filters">
                 <button type="button" class="wti-search-clear" aria-label="Clear search" title="Clear search">&times;</button>
             </span>
+            <div class="wti-rating-filter" id="wti-rating-filter" title="Filter by rating (click the selected star again to clear)"
+                 hx-get="^/{{ appSlug }}/browse"
+                 hx-trigger="change, wti:filter"
+                 hx-target="#wti-grid"
+                 hx-include="#wti-filters">
+                <select name="ratingop" class="wti-rating-op" aria-label="Rating comparison">
+                    <option value="gte">&ge;</option>
+                    <option value="eq">=</option>
+                    <option value="lte">&le;</option>
+                </select>
+                <input type="hidden" name="rating" id="wti-rating-filter-value" value="">
+                <button type="button" class="wti-rate-btn is-none" data-filter-rate="0" aria-label="No rating">&#8856;</button>
+                <button type="button" class="wti-rate-btn" data-filter-rate="1" aria-label="1 star">&#9733;</button>
+                <button type="button" class="wti-rate-btn" data-filter-rate="2" aria-label="2 stars">&#9733;</button>
+                <button type="button" class="wti-rate-btn" data-filter-rate="3" aria-label="3 stars">&#9733;</button>
+                <button type="button" class="wti-rate-btn" data-filter-rate="4" aria-label="4 stars">&#9733;</button>
+                <button type="button" class="wti-rate-btn" data-filter-rate="5" aria-label="5 stars">&#9733;</button>
+            </div>
             <select name="sort" class="form-control wti-sort"
                     hx-get="^/{{ appSlug }}/browse"
                     hx-trigger="change"
@@ -360,6 +378,7 @@
         thumb.classList.add('is-active');
         thumb.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
         updateStageNav();
+        syncStageRating();
     }
 
     /* Switching to filmstrip keeps the image open in the detail panel on the stage.
@@ -406,6 +425,147 @@
         trySelectPending();
         updateStageNav();
         syncDetailsToggle();
+        syncStageRating();
+    });
+
+    /* ---------- Rating (Rock "Rating" attribute, 0 = none, 1-5 stars) ---------- */
+    var rateUrl = '/api/v2/lava-app/1/{{ appSlug }}/rate';
+    var rateChain = Promise.resolve();
+    var NONE = '⊘';
+    var STAR = '★';
+
+    function sameGuid(a, b) { return (a || '').toLowerCase() === (b || '').toLowerCase(); }
+
+    /* Thumbnail badge markup; matches browse.lava */
+    function ratingBadge(n) {
+        if (!n) { return '<span class="wti-rating is-none" title="No rating">' + NONE + '</span>'; }
+        var html = '<span class="wti-rating" title="' + n + ' of 5 stars">';
+        for (var i = 1; i <= 5; i++) { html += '<i' + (i <= n ? ' class="is-on"' : '') + '>' + STAR + '</i>'; }
+        return html + '</span>';
+    }
+
+    /* Light up a row of [data-rate] / [data-filter-rate] buttons for value n ('' = nothing) */
+    function paintRateButtons(container, n, attr) {
+        if (!container) { return; }
+        container.querySelectorAll('[' + attr + ']').forEach(function (btn) {
+            var v = parseInt(btn.getAttribute(attr), 10);
+            var on = n !== '' && n !== null && (v === 0 ? Number(n) === 0 : v <= Number(n));
+            btn.classList.toggle('is-on', on);
+        });
+    }
+
+    function syncStageRating() {
+        var active = document.querySelector('.wti-thumb.is-active');
+        paintRateButtons(document.getElementById('wti-stage-rating'), active ? (active.dataset.rating || 0) : '', 'data-rate');
+    }
+
+    function currentRating(guid) {
+        var tiles = document.querySelectorAll('.wti-thumb[data-guid], .wti-card[data-guid]');
+        for (var i = 0; i < tiles.length; i++) {
+            if (sameGuid(tiles[i].dataset.guid, guid)) { return parseInt(tiles[i].dataset.rating, 10) || 0; }
+        }
+        var checked = document.querySelector('.wti-detail-panel .wti-rating-input input:checked');
+        return checked ? parseInt(checked.value, 10) : 0;
+    }
+
+    /* Show rating n for an image everywhere it appears: thumbnails, stage, details panel */
+    function applyRating(guid, n) {
+        document.querySelectorAll('.wti-thumb[data-guid], .wti-card[data-guid]').forEach(function (tile) {
+            if (!sameGuid(tile.dataset.guid, guid)) { return; }
+            tile.dataset.rating = n;
+            var badge = tile.querySelector('.wti-rating');
+            if (badge) { badge.outerHTML = ratingBadge(n); }
+        });
+        syncStageRating();
+        var panel = document.querySelector('.wti-detail-panel[data-guid]');
+        if (panel && sameGuid(panel.dataset.guid, guid)) {
+            var radio = panel.querySelector('.wti-rating-input input[value="' + n + '"]');
+            if (radio) { radio.checked = true; }
+        }
+    }
+
+    /* POST the rating and read the endpoint's reply directly (no htmx swap involved).
+       Sends the same CSRF header Helix adds to htmx requests. */
+    function postRating(guid, n) {
+        return fetch(rateUrl, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+                'X-Helix-CSRF-Protection': 'true',
+                'HX-Request': 'true'
+            },
+            body: new URLSearchParams({ guid: guid, rating: String(n) }).toString()
+        }).then(function (response) {
+            return response.text().then(function (text) {
+                if (!response.ok) {
+                    throw new Error('Rating not saved (' + response.status + ' ' + response.statusText + ').');
+                }
+                var reply = document.createElement('template');
+                reply.innerHTML = text;
+                if (reply.content.querySelector('.wti-rate-ok')) { return; }
+                var message = reply.content.textContent.trim();
+                throw new Error(message || 'Rating not saved: unexpected reply from the rate endpoint.');
+            });
+        });
+    }
+
+    /* Optimistic update, then save; requests run one at a time so the last click wins */
+    function setRating(guid, n) {
+        if (!guid) { return; }
+        var previous = currentRating(guid);
+        if (previous === n) { return; }
+        applyRating(guid, n);
+
+        rateChain = rateChain.then(function () {
+            return postRating(guid, n);
+        }).catch(function (error) {
+            applyRating(guid, previous);
+            if (window.console) { console.warn('[wti] rate failed', guid, n, error); }
+            reportFailure({ target: grid }, error && error.message ? error.message : 'Rating not saved.');
+        });
+    }
+
+    /* Filmstrip stage stars, and the details panel stars */
+    document.addEventListener('click', function (e) {
+        var btn = e.target.closest('#wti-stage-rating [data-rate]');
+        if (!btn) { return; }
+        var active = document.querySelector('.wti-thumb.is-active');
+        if (active) { setRating(active.dataset.guid, parseInt(btn.dataset.rate, 10)); }
+    });
+    document.addEventListener('change', function (e) {
+        if (!e.target.matches('.wti-rating-input input')) { return; }
+        var panel = e.target.closest('.wti-detail-panel[data-guid]');
+        if (panel) { setRating(panel.dataset.guid, parseInt(e.target.value, 10)); }
+    });
+
+    /* Keys 0-5 rate the filmstrip image, or the image open in the details panel (grid view) */
+    document.addEventListener('keydown', function (e) {
+        if (!/^[0-5]$/.test(e.key) || e.ctrlKey || e.metaKey || e.altKey) { return; }
+        if (document.body.classList.contains('modal-open')) { return; }
+        if (e.target.closest('input, textarea, select, [contenteditable]')) { return; }
+        var active = document.querySelector('.wti-thumb.is-active');
+        var panel = document.querySelector('.wti-detail-panel[data-guid] .wti-rating-input');
+        var guid = active ? active.dataset.guid : (panel ? panel.closest('.wti-detail-panel').dataset.guid : null);
+        if (!guid) { return; }
+        e.preventDefault();
+        setRating(guid, parseInt(e.key, 10));
+    });
+
+    /* Toolbar rating filter: click a value to filter, click it again to clear */
+    var ratingFilter = document.getElementById('wti-rating-filter');
+    var ratingFilterValue = document.getElementById('wti-rating-filter-value');
+    function paintRatingFilter() {
+        paintRateButtons(ratingFilter, ratingFilterValue.value, 'data-filter-rate');
+        ratingFilter.classList.toggle('is-active', ratingFilterValue.value !== '');
+    }
+    ratingFilter.addEventListener('click', function (e) {
+        var btn = e.target.closest('[data-filter-rate]');
+        if (!btn) { return; }
+        var value = btn.dataset.filterRate;
+        ratingFilterValue.value = ratingFilterValue.value === value ? '' : value;
+        paintRatingFilter();
+        htmx.trigger(ratingFilter, 'wti:filter');
     });
 
     /* hx-confirm: use Rock's modal (bootbox) instead of the browser's confirm() */
@@ -699,6 +859,55 @@
 .wti-more { grid-column: 1 / -1; height: 1px; }
 .wti-empty { grid-column: 1 / -1; color: var(--color-interface-medium, #8b8ba7); }
 
+/* Rating: badge on thumbnails (over the photo, so fixed light-on-dark colors) */
+.wti-card-media { position: relative; display: block; }
+.wti-rating {
+    position: absolute; left: 6px; bottom: 6px;
+    display: inline-flex; gap: 1px; padding: 1px 6px; border-radius: 10px;
+    font-size: 12px; line-height: 16px; color: rgba(255,255,255,.9);
+    background: rgba(0,0,0,.55); pointer-events: none;
+}
+.wti-rating i { font-style: normal; color: rgba(255,255,255,.35); }
+.wti-rating i.is-on { color: #f5b301; }
+.wti-thumb .wti-rating { left: 4px; bottom: 4px; padding: 0 4px; font-size: 10px; line-height: 14px; }
+
+/* Rating: clickable stars (filmstrip stage, toolbar filter) */
+.wti-rate-btn {
+    padding: 0 2px; border: 0; background: none; cursor: pointer;
+    font-size: 16px; line-height: 1;
+    color: var(--color-interface-soft, #d9d9e3);
+}
+.wti-rate-btn:hover { color: var(--color-interface-medium, #8b8ba7); }
+.wti-rate-btn.is-on { color: #f5b301; }
+.wti-rate-btn.is-none.is-on { color: var(--color-interface-strong, #3d444d); }
+
+/* Rating: toolbar filter */
+.wti-rating-filter {
+    display: inline-flex; align-items: center; gap: 1px; flex: 0 0 auto;
+    height: 34px; padding: 0 6px 0 2px; border-radius: 4px;
+    border: 1px solid var(--color-interface-soft, #d9d9e3);
+    background: var(--color-interface-softest, #fff);
+}
+.wti-rating-filter.is-active { border-color: #f5b301; }
+.wti-rating-op {
+    height: 28px; padding: 0 2px; border: 0; background: transparent; box-shadow: none;
+    color: var(--color-interface-strong, #3d444d); font-size: 14px; cursor: pointer;
+}
+
+/* Rating: details panel */
+.wti-rating-field .control-label { display: block; }
+.wti-rating-input { display: inline-flex; align-items: center; gap: 2px; }
+.wti-rate-opt { position: relative; margin: 0; font-size: 22px; line-height: 1; font-weight: normal; cursor: pointer; color: var(--color-interface-soft, #d9d9e3); }
+.wti-rate-opt input { position: absolute; opacity: 0; pointer-events: none; }
+.wti-rate-opt:hover { color: var(--color-interface-medium, #8b8ba7); }
+.wti-rating-input:has(input[value="0"]:checked) .wti-rate-opt.is-none { color: var(--color-interface-strong, #3d444d); }
+.wti-rating-input:has(input[value="1"]:checked) .wti-rate-opt:nth-child(-n+2):not(.is-none),
+.wti-rating-input:has(input[value="2"]:checked) .wti-rate-opt:nth-child(-n+3):not(.is-none),
+.wti-rating-input:has(input[value="3"]:checked) .wti-rate-opt:nth-child(-n+4):not(.is-none),
+.wti-rating-input:has(input[value="4"]:checked) .wti-rate-opt:nth-child(-n+5):not(.is-none),
+.wti-rating-input:has(input[value="5"]:checked) .wti-rate-opt:nth-child(-n+6):not(.is-none) { color: #f5b301; }
+.wti-rate-opt:has(input:focus-visible) { outline: 2px solid var(--color-interface-medium, #8b8ba7); outline-offset: 2px; border-radius: 3px; }
+
 /* Resolution dots */
 .wti-res {
     position: absolute; top: 8px; left: 8px;
@@ -725,7 +934,11 @@
     color: var(--color-interface-strong, #3d444d);
     background: color-mix(in srgb, var(--color-interface-softest, #fdfdfd) 85%, transparent);
     border-top: 1px solid var(--color-interface-soft, #d9d9e3);
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
 }
+.wti-stage-name { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wti-stage-rating { display: inline-flex; align-items: center; gap: 2px; flex: 0 0 auto; }
+.wti-stage-rating .wti-rate-btn { font-size: 20px; }
 .wti-stage-nav {
     position: absolute; top: 50%; transform: translateY(-50%);
     width: 44px; height: 44px; padding: 0; border-radius: 50%;

@@ -37,6 +37,8 @@ ORDER BY [Order], Value;
 {%- binaryfile id:'{{ fileId }}' -%}
 {%- assign kwRaw = binaryfile | Attribute:'Keywords','RawValue' | Downcase -%}
 {%- assign audRaw = binaryfile | Attribute:'Audience','RawValue' | Downcase -%}
+{%- assign ratingValue = binaryfile | Attribute:'Rating','RawValue' | AsDecimal | Default:0 | Floor | AsInteger -%}
+{%- if ratingValue < 0 or ratingValue > 5 -%}{%- assign ratingValue = 0 -%}{%- endif -%}
 {%- assign sizeMb = binaryfile.FileSize | DividedBy:1048576,1 -%}
 {%- capture imageUrl -%}/GetImage.ashx?guid={{ binaryfile.Guid }}{%- endcapture -%}
 
@@ -74,6 +76,17 @@ ORDER BY [Order], Value;
         </button>
     </div>
     {%- else -%}
+
+    {%- comment -%} Rating saves on click through the rate endpoint (not part of Save) {%- endcomment -%}
+    <div class="form-group wti-rating-field">
+        <span class="control-label">Rating</span>
+        <div class="wti-rating-input" role="radiogroup" aria-label="Rating">
+            <label class="wti-rate-opt is-none" title="No rating"><input type="radio" name="wti-rating" value="0"{% if ratingValue == 0 %} checked{% endif %}><span>&#8856;</span></label>
+            {%- for i in (1..5) -%}
+            <label class="wti-rate-opt" title="{{ i }} star{% if i > 1 %}s{% endif %}"><input type="radio" name="wti-rating" value="{{ i }}"{% if ratingValue == i %} checked{% endif %}><span>&#9733;</span></label>
+            {%- endfor -%}
+        </div>
+    </div>
 
     <lava-form class="wti-edit">
         <input type="hidden" name="guid" value="{{ binaryfile.Guid }}">

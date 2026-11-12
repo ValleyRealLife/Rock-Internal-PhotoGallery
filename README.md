@@ -9,6 +9,7 @@ Built and tested on Rock v18. Lava Applications and endpoints are required.
 - **Grid and filmstrip views.** The filmstrip has a large viewer with ←/→ keys and on-image arrows.
 - **Search, sort, and infinite scroll.** Pages load as you scroll, and thumbnails are lazy-loaded.
 - **Resolution dot on each thumbnail.** Red, yellow, or green, by the original's longest edge.
+- **Star ratings.** Each thumbnail shows its rating (⊘ for none, or 1–5 stars). Rate from the details panel, from the stars under the filmstrip viewer, or with keys 0–5. A Lightroom-style filter next to search shows images at, above, or below a rating.
 - **Upload by button or drag-and-drop.** Files upload one at a time with progress, and the first new image opens in the details panel.
 - **Details panel.** Edit the description, keywords (editors can add new ones), and audience, and copy the GUID.
 - **Image URL builder.** Opens from a thumbnail, the filmstrip, or the details panel. Set width, height, fit (fit within, crop, pad, stretch), focus point, padding color, format, quality, and upscaling, with a live preview and the actual output size.
@@ -25,6 +26,7 @@ Built and tested on Rock v18. Lava Applications and endpoints are required.
 | `update.lava` | `update` endpoint | Saves Description, Keywords, Audience; creates new keywords |
 | `delete.lava` | `delete` endpoint | Soft delete (sets `IsTemporary = 1`) |
 | `restore.lava` | `restore` endpoint | Recovers a deleted image (sets `IsTemporary = 0`) |
+| `rate.lava` | `rate` endpoint | Saves an image's rating (0–5) |
 
 ## Installation
 
@@ -59,14 +61,15 @@ For audiences, you can use Rock's built-in **Audience Type** Defined Type or cre
 | Cache To Server File System | **On.** Resized images are saved on the server. Without this, every thumbnail is rebuilt from the original on every request. |
 | Cache Control Header | Public, with a max age of a few days or more. Content never changes under the same GUID. |
 
-Add two **File Attributes** to the type:
+Add three **File Attributes** to the type:
 
 | Name | Key | Field Type | Settings |
 |---|---|---|---|
 | Keywords | `Keywords` | Defined Value | Defined Type = your keyword type, **Allow Multiple** on, **Allow Adding New Values** on |
 | Audience | `Audience` | Defined Value | Defined Type = your audience type, **Allow Multiple** on |
+| Rating | `Rating` | Rating | Max rating 5 |
 
-The attribute keys must be exactly `Keywords` and `Audience`.
+The attribute keys must be exactly `Keywords`, `Audience`, and `Rating`.
 
 Note the File Type's **Id** and **Guid**.
 
@@ -114,6 +117,7 @@ Add one endpoint per row. Turn **Cross-Site Forgery Protection** on for all of t
 | `update` | POST | Application Edit | Sql, Modify Entity | `update.lava` |
 | `delete` | POST | Application Edit | Sql, Modify Entity | `delete.lava` |
 | `restore` | POST | Application Edit | Sql, Modify Entity | `restore.lava` |
+| `rate` | POST | Application Edit | Sql, Modify Entity | `rate.lava` |
 
 Watch the HTTP Method on `delete`: it must be **POST**. If it's set to DELETE, every delete returns a 404.
 
@@ -133,7 +137,7 @@ Grant these to the role(s) that manage images:
 
 | Where | Permission | Why |
 |---|---|---|
-| Lava Application | Execute View, Execute Edit | Browse and view need View; update, delete, and recover need Edit |
+| Lava Application | Execute View, Execute Edit | Browse and view need View; update, rate, delete, and recover need Edit |
 | File Type | Edit | Rock's uploader checks this before accepting files |
 | Keyword Defined Type | Edit | Lets editors add new keywords |
 | The page | View | Opens the gallery |
