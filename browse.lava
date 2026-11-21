@@ -5,6 +5,7 @@
 {%- assign thumbWidth = ConfigurationRigging.ThumbWidth | Default:480 -%}
 {%- assign stripWidth = ConfigurationRigging.StripWidth | Default:160 -%}
 {%- assign previewWidth = ConfigurationRigging.PreviewWidth | Default:1600 -%}
+{%- assign pickerWidth = 320 -%}
 {%- assign lowResMaxEdge = 500 -%}
 {%- assign highResMinEdge = 1921 -%}
 {%- assign page = QueryString.page | AsInteger | Default:1 -%}
@@ -14,8 +15,9 @@
 {%- assign audience = QueryString.audience | Trim | Default:'' -%}
 {%- assign sort = QueryString.sort | Default:'newest' -%}
 {%- assign view = QueryString.view | Default:'grid' -%}
-{%- if view != 'filmstrip' -%}{%- assign view = 'grid' -%}{%- endif -%}
+{%- if view != 'filmstrip' and view != 'picker' -%}{%- assign view = 'grid' -%}{%- endif -%}
 {%- assign deleted = QueryString.deleted | AsBoolean -%}
+{%- if view == 'picker' -%}{%- assign deleted = false -%}{%- endif -%}
 {%- assign deletedFlag = 0 -%}{%- if deleted -%}{%- assign deletedFlag = 1 -%}{%- endif -%}
 
 {%- comment -%} Rating filter: rating 0-5 (blank = off), ratingop gte | eq | lte {%- endcomment -%}
@@ -83,12 +85,32 @@ OFFSET CAST(@offset AS int) ROWS FETCH NEXT CAST(@take AS int) ROWS ONLY;
 {%- assign rowCount = results | Size -%}
 {%- assign hasMore = false -%}
 {%- if rowCount > pageSize -%}{%- assign hasMore = true -%}{%- endif -%}
-{%- capture nextUrl -%}^/web-theme-images/browse?page={{ page | Plus:1 }}&view={{ view }}&q={{ q | EscapeDataString }}&keyword={{ keyword | EscapeDataString }}&audience={{ audience | EscapeDataString }}&sort={{ sort | EscapeDataString }}&deleted={{ deletedFlag }}&rating={{ rating }}&ratingop={{ ratingOp }}{%- endcapture -%}
+{%- capture nextUrl -%}^/photogallery/browse?page={{ page | Plus:1 }}&view={{ view }}&q={{ q | EscapeDataString }}&keyword={{ keyword | EscapeDataString }}&audience={{ audience | EscapeDataString }}&sort={{ sort | EscapeDataString }}&deleted={{ deletedFlag }}&rating={{ rating }}&ratingop={{ ratingOp }}{%- endcapture -%}
 {%- capture sentinel -%}{%- if hasMore -%}<div class="wti-more" hx-get="{{ nextUrl }}" hx-trigger="intersect once" hx-swap="outerHTML"></div>{%- endif -%}{%- endcapture -%}
 
 {%- comment -%} Markup {%- endcomment -%}
 {%- if page == 1 and rowCount == 0 -%}
 <p class="wti-empty">{% if deleted %}No recently deleted images{% else %}No images match{% endif %}{% if rating != '' %} at this rating{% endif %}.</p>
+
+{%- elsif view == 'picker' -%}
+{%- comment -%} Lean items for picker.js (the HTML editor's Insert photo panel); styled by picker.js, not content.lava {%- endcomment -%}
+{%- for row in results limit:pageSize -%}
+{%- assign stars = row.Rating | AsInteger | Default:0 -%}
+<button type="button" class="wti-pk-item"
+        data-guid="{{ row.Guid }}"
+        data-name="{{ row.FileName | Escape }}"
+        data-desc="{{ row.Description | Escape }}"
+        data-width="{{ row.Width }}"
+        data-height="{{ row.Height }}"
+        data-rating="{{ stars }}"
+        title="{{ row.FileName | Escape }}">
+    <img src="/GetImage.ashx?guid={{ row.Guid }}&w={{ pickerWidth }}" alt="" loading="lazy">
+    {%- if stars == 0 -%}<span class="wti-pk-stars is-none" title="No rating">&#8856;</span>
+    {%- else -%}<span class="wti-pk-stars" title="{{ stars }} of 5 stars">{% for i in (1..5) %}<i{% if i <= stars %} class="is-on"{% endif %}>&#9733;</i>{% endfor %}</span>
+    {%- endif -%}
+</button>
+{%- endfor -%}
+{%- if hasMore -%}<div class="wti-pk-more" data-page="{{ page | Plus:1 }}"></div>{%- endif -%}
 
 {%- elsif view == 'filmstrip' -%}
 {%- capture thumbs -%}
@@ -159,7 +181,7 @@ OFFSET CAST(@offset AS int) ROWS FETCH NEXT CAST(@take AS int) ROWS ONLY;
 <button type="button" class="wti-card"
         data-guid="{{ row.Guid }}"
         data-rating="{{ stars }}"
-        hx-get="^/web-theme-images/detail?guid={{ row.Guid }}"
+        hx-get="^/photogallery/detail?guid={{ row.Guid }}"
         hx-target="#wti-detail">
     <span class="wti-card-media">
         <img src="/GetImage.ashx?guid={{ row.Guid }}&w={{ thumbWidth }}"

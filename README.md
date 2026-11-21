@@ -1,8 +1,8 @@
-# Web Theme Images
+# PhotoGallery
 
-An internal image library for Rock RMS, built as a **Lava Application** (Helix). Editors upload full-resolution photos, tag them with keywords and audiences, and copy a GUID or a ready-made resize URL to use the image on your website.
+An internal image library for Rock RMS, built as a **Lava Application** (Helix). Editors upload full-resolution photos, tag them with keywords and audiences, and copy a GUID or a ready-made resize URL to use the image on your website. An **Insert from Gallery** button in Rock's HTML editor puts photos straight into content.
 
-Built and tested on Rock v18. Lava Applications and endpoints are required.
+Built on Rock v18 and tested on v19. Lava Applications and endpoints are required.
 
 ## Features
 
@@ -14,6 +14,7 @@ Built and tested on Rock v18. Lava Applications and endpoints are required.
 - **Metadata import on upload.** Description, rating, and keywords embedded by Lightroom, Bridge, Photo Mechanic, and similar tools (XMP) are applied to each new image. See [Metadata import](#metadata-import).
 - **Details panel.** Edit the description, keywords (editors can add new ones), and audience, and copy the GUID.
 - **Image URL builder.** Opens from a thumbnail, the filmstrip, or the details panel. Set width, height, fit (fit within, crop, pad, stretch), focus point, padding color, format, quality, and upscaling, with a live preview and the actual output size.
+- **Insert from Gallery in the HTML editor.** A toolbar button in Rock's HTML editor opens the gallery (search, rating filter, sort), then inserts an `<img>` tag at the cursor. See [Insert from Gallery](#insert-from-gallery).
 - **Delete with recover.** Deleting is soft. The image can be recovered until Rock's cleanup job removes it, about a day later.
 - **Follows Rock's light, dark, and system theme.** Colors come from Rock's `--color-interface-*` variables.
 
@@ -22,24 +23,25 @@ Built and tested on Rock v18. Lava Applications and endpoints are required.
 | File | Used by | Purpose |
 |---|---|---|
 | `content.lava` | Lava Application Content block | Page shell: toolbar, gallery container, details panel, URL builder modal, all JavaScript and CSS |
-| `browse.lava` | `browse` endpoint | Grid cards or filmstrip, search, sort, paging |
+| `browse.lava` | `browse` endpoint | Grid cards, filmstrip, or picker items; search, sort, paging |
 | `detail.lava` | `detail` endpoint | Details panel: preview, metadata, edit form |
 | `update.lava` | `update` endpoint | Saves Description, Keywords, Audience; creates new keywords |
 | `delete.lava` | `delete` endpoint | Soft delete (sets `IsTemporary = 1`) |
 | `restore.lava` | `restore` endpoint | Recovers a deleted image (sets `IsTemporary = 0`) |
 | `rate.lava` | `rate` endpoint | Saves an image's rating (0–5) |
+| `picker.js` | HTML Content block on every internal page | Insert from Gallery button and panel for Rock's HTML editor |
 
 ## Installation
 
 ### 1. Copy the files
 
-Put the `.lava` files on your Rock web server, for example in:
+Put the files on your Rock web server, for example in:
 
 ```
-RockWeb/Content/Lava/web-theme-images/
+RockWeb/Content/Lava/photogallery/
 ```
 
-The examples below use this path. If you use a different folder, change the `include` paths to match.
+The examples below use this path. If you use a different folder, change the `include` paths and the `picker.js` script path to match.
 
 ### 2. Create the keyword Defined Type
 
@@ -78,7 +80,8 @@ Note the File Type's **Id** and **Guid**.
 
 Open **Lava Applications** in Rock's admin menu and add a new application.
 
-- **Slug:** `web-theme-images`. The templates use this slug in several places (`^/web-theme-images/...` and `appSlug` at the top of `content.lava`). If you choose a different slug, find and replace it in every `.lava` file.
+- **Name:** `PhotoGallery` (any name works).
+- **Slug:** `photogallery`. The files use this slug in several places: `^/photogallery/...` in the endpoint templates, `appSlug` at the top of `content.lava`, and `BROWSE_URL` near the top of `picker.js`. If you choose a different slug, find and replace it in every `.lava` file and in `picker.js`.
 
 ### 5. Configuration Rigging
 
@@ -108,7 +111,7 @@ Configuration Rigging is available to endpoints but **not** to the content block
 Add one endpoint per row. Turn **Cross-Site Forgery Protection** on for all of them. Each endpoint's template is a single `include` line:
 
 ```liquid
-{% include '~/Content/Lava/web-theme-images/browse.lava' %}
+{% include '~/Content/Lava/photogallery/browse.lava' %}
 ```
 
 | Slug | HTTP Method | Security Mode | Enabled Lava Commands | Template file |
@@ -129,10 +132,22 @@ Watch the HTTP Method on `delete`: it must be **POST**. If it's set to DELETE, e
 3. Set its content to:
 
 ```liquid
-{% include '~/Content/Lava/web-theme-images/content.lava' %}
+{% include '~/Content/Lava/photogallery/content.lava' %}
 ```
 
-### 8. Security
+### 8. Add Insert from Gallery to the HTML editor (optional)
+
+On your internal site, add an **HTML Content** block to the **Header** zone at the **Site** level, so it loads on every page. In the editor's code view, set its content to:
+
+```html
+<script src="/Content/Lava/photogallery/picker.js?v=5" data-gallery-url="/page/123" defer></script>
+```
+
+- `data-gallery-url` is optional. Set it to your gallery page's address to add an **Open gallery** link to the panel, or leave it out.
+- Change `?v=` whenever `picker.js` changes, so browsers load the new copy.
+- Use the block's security to show it only to the roles that edit content.
+
+### 9. Security
 
 Grant these to the role(s) that manage images:
 
@@ -143,7 +158,9 @@ Grant these to the role(s) that manage images:
 | Keyword Defined Type | Edit | Lets editors add new keywords |
 | The page | View | Opens the gallery |
 
-### 9. Large uploads
+Content editors who only use Insert from Gallery need **Execute View** on the Lava Application.
+
+### 10. Large uploads
 
 Upload size is limited by IIS, not Rock. To accept large originals, raise `maxAllowedContentLength` (in bytes) and `httpRuntime maxRequestLength` (in KB) in `web.config`.
 
@@ -157,6 +174,27 @@ Each image is addressed by its GUID:
 Useful `GetImage.ashx` options: `w`, `h`, `mode` (`max`, `crop`, `pad`, `stretch`), `anchor` (for example `topcenter`), `scale=both` (allow enlarging), `format` (`jpg`, `png`, `gif`), `quality`, `bgcolor` (hex without `#`).
 
 If you set both `w` and `h` without `mode`, Rock keeps only the larger of the two. Always include `mode` when you give both. The URL builder does this for you.
+
+## Insert from Gallery
+
+The **Insert from Gallery** button sits at the end of the HTML editor's toolbar wherever Rock uses its standard HTML editor (Summernote), such as the HTML Content block and content channel items.
+
+1. Click where the photo should go, then click the button.
+2. Search, filter by rating, or sort, and select a photo. Double-click inserts it right away.
+3. Pick a size: the same presets as the URL builder, or your own width and height, with **Fit within** or **Crop to fill**.
+4. Check the alt text. It starts as the photo's description and stays blank if there is none.
+5. Click **Insert**.
+
+The inserted tag looks like this:
+
+```html
+<img src="/GetImage.ashx?guid={guid}&w=1920" alt="…" width="1920" height="1280" style="max-width: 100%; height: auto;">
+```
+
+- **Code editor mode:** the tag is inserted at the code editor's cursor.
+- **Replace an image:** select an image in the visual editor first, and the button replaces it.
+- **The last size you used is remembered** in your browser.
+- **Not covered:** editors inside pop-up dialogs such as Block Properties, and Rock's newer TinyMCE editor.
 
 ## Metadata import
 
@@ -183,18 +221,22 @@ Rock's **Rock Cleanup** job permanently removes temporary files (record and stor
 | Symptom | Cause |
 |---|---|
 | A change to a `.lava` file doesn't show | Rock caches compiled Lava. Clear the Lava template cache (Admin Tools → Power Tools → Cache Manager). |
-| An action shows "Request failed (404)" | The endpoint is missing, inactive, misnamed, or has the wrong HTTP method. |
+| An action shows "Request failed (404)" | The endpoint is missing, inactive, misnamed, or has the wrong HTTP method, or the slug doesn't match the files. |
 | Opening an endpoint URL in the browser returns 401 | Expected. Cross-Site Forgery Protection requires a header that only the gallery page sends. Test through the page. |
 | Thumbnails are slow every time | **Cache To Server File System** is off on the File Type. |
 | Upload fails on large files | The IIS request limits in `web.config`. |
 | A Save or Delete fails with a permissions error | The user needs Execute Edit on the application and Edit on the File Type. |
+| No Insert from Gallery button | The loader block isn't on the page's site or the user can't view it, or the editor is in a pop-up dialog. |
+| The Insert from Gallery panel shows an error listing file names | `browse.lava` is an older copy without the picker view, or Rock is serving a cached copy. Clear the Lava cache. |
+| The panel says you don't have access | The user needs Execute View on the Lava Application. |
 
 ## Notes for developers
 
-- **Template order:** Lava processing first, then markup, then `{% stylesheet %}` last. `{% stylesheet %}` and `{% javascript %}` don't work in endpoints, so all CSS and JavaScript live in `content.lava`.
-- **CSS:** class names use the `wti-` prefix. Colors use Rock's CSS variables, so light and dark mode work.
+- **Template order:** Lava processing first, then markup, then `{% stylesheet %}` last. `{% stylesheet %}` and `{% javascript %}` don't work in endpoints, so all CSS and JavaScript for the gallery page live in `content.lava`.
+- **CSS:** class names use the `wti-` prefix (`wti-pk-` in `picker.js`, which brings its own styles). Colors use Rock's CSS variables, so light and dark mode work.
 - **SQL:** every user-supplied value is passed as a named `{% sql %}` parameter. Submitted GUIDs are validated against their own Defined Type or the File Type before anything is written.
 - **Forms:** the Rock page is one WebForms `<form>`, so the templates use `<lava-form>` with `type="button"` buttons rather than nested forms.
 - **Modify Entity:** ignores `result:` in this version. Read `ModifyResult` right after each modify command.
 - **Hidden elements:** some themes override the `hidden` attribute, so the templates hide elements with a class that uses `display: none !important`.
 - **Azure Blob Storage:** the blob name is built from the file's GUID and `FileName` on every read and delete. Never change a file's `FileName`. Put readable titles in `Description`.
+- **picker.js:** reads `browse` with `view=picker` and sends the CSRF header itself. It keeps its own copy of the editor's cursor, because Summernote resets its saved position when the editor regains focus. The panel is a native `<dialog>` placed inside the editor's modal, so Bootstrap's focus trap leaves its inputs alone.

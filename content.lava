@@ -1,5 +1,5 @@
 {%- comment -%} Lava {%- endcomment -%}
-{%- assign appSlug = 'web-theme-images' -%}
+{%- assign appSlug = 'photogallery' -%}
 {%- assign fileTypeGuid = ConfigurationRigging.FileTypeGuid | Default:'0279c0ea-fc51-4047-90e4-4493ed67be65' -%}
 
 {%- comment -%} Markup {%- endcomment -%}

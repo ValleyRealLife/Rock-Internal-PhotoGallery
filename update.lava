@@ -81,7 +81,7 @@ WHERE DefinedTypeId = @dt
 {%- elsif saveSuccess -%}
 <div class="wti-saved"><i class="fa fa-check"></i> Saved</div>
 {%- if newKeywordsIn != '' -%}
-<div hx-get="^/web-theme-images/detail?guid={{ fileGuid }}&saved=1" hx-trigger="load" hx-target="#wti-detail"></div>
+<div hx-get="^/photogallery/detail?guid={{ fileGuid }}&saved=1" hx-trigger="load" hx-target="#wti-detail"></div>
 {%- endif -%}
 {%- else -%}
 <div class="alert alert-warning">

@@ -27,7 +27,7 @@ WHERE Guid = TRY_CAST(@guid AS uniqueidentifier)
 {%- comment -%} Response (swapped into #wti-detail) {%- endcomment -%}
 {%- if restoreSuccess -%}
 <div class="wti-detail-panel" data-wti-restored
-     hx-get="^/web-theme-images/detail?guid={{ fileGuid | EscapeDataString }}&restored=1"
+     hx-get="^/photogallery/detail?guid={{ fileGuid | EscapeDataString }}&restored=1"
      hx-trigger="load"
      hx-target="#wti-detail">
     <p><i class="fa fa-spinner fa-spin"></i> Recovered. Loading…</p>

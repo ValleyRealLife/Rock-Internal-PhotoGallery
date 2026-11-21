@@ -67,7 +67,7 @@ ORDER BY [Order], Value;
     </div>
     <div class="wti-detail-foot">
         <button type="button" class="btn btn-primary btn-sm wti-restore"
-                hx-post="^/web-theme-images/restore"
+                hx-post="^/photogallery/restore"
                 hx-vals='{"guid": "{{ binaryfile.Guid }}"}'
                 hx-target="#wti-detail"
                 hx-on::before-request="this.disabled = true;"
@@ -123,7 +123,7 @@ ORDER BY [Order], Value;
 
         <div id="wti-status">{% if saved %}<div class="wti-saved"><i class="fa fa-check"></i> Saved</div>{% elsif restored %}<div class="wti-saved"><i class="fa fa-check"></i> Recovered</div>{% endif %}</div>
         <button type="button" class="btn btn-primary btn-sm wti-save"
-                hx-post="^/web-theme-images/update"
+                hx-post="^/photogallery/update"
                 hx-include="closest lava-form"
                 hx-target="#wti-status"
                 hx-on::before-request="this.classList.add('is-busy'); this.disabled = true;"
@@ -153,7 +153,7 @@ ORDER BY [Order], Value;
 
     <div class="wti-detail-foot">
         <button type="button" class="btn btn-default btn-sm wti-delete"
-                hx-post="^/web-theme-images/delete"
+                hx-post="^/photogallery/delete"
                 hx-vals='{"guid": "{{ binaryfile.Guid }}"}'
                 hx-target="#wti-detail"
                 hx-confirm="Delete {{ binaryfile.FileName | Escape }}?&#10;&#10;Pages that use this image's GUID will show a broken image."

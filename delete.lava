@@ -49,7 +49,7 @@ WHERE Guid = TRY_CAST(@guid AS uniqueidentifier)
         {%- for message in deleteValidation %}<br>{{ message.ErrorMessage | Escape }}{% endfor -%}
     </div>
     <button type="button" class="btn btn-default btn-sm"
-            hx-get="^/web-theme-images/detail?guid={{ fileGuid | EscapeDataString }}"
+            hx-get="^/photogallery/detail?guid={{ fileGuid | EscapeDataString }}"
             hx-target="#wti-detail">Back</button>
     {%- endif -%}
 </div>
